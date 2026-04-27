@@ -19,6 +19,8 @@ import {
   AnnotationOverlayHandle,
 } from "@/components/lecturer/AnnotationOverlay";
 
+import { LectureRecorderBar } from "@/components/lecturer/LectureRecorderBar";
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 type LoadedPdf = {
@@ -32,6 +34,7 @@ const Lecturer = () => {
   const [page, setPage] = useState(1);
   const [thumbs, setThumbs] = useState<string[]>([]);
   const [annotateActive, setAnnotateActive] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const annotationRef = useRef<AnnotationOverlayHandle | null>(null);
