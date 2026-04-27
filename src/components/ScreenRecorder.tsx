@@ -43,25 +43,18 @@ export const ScreenRecorder = () => {
   const [bubblePos, setBubblePos] = useState({ x: 0.76, y: 0.76 }); // top-left
   const [bubbleSize, setBubbleSize] = useState(0.22); // width as fraction of screen width
 
-  const { processedStream: camStream, canvasRef: camCanvasRef, error: camError } = useCameraStream({
-    enabled: cameraMode !== "off",
+  const { rawStream: rawCamStream, processedStream: camStream, error: camError, requestCamera, stopCamera } = useCameraStream({
     backgroundMode: bgMode,
     backgroundImageUrl: bgImageUrl,
     blurAmount,
   });
+  const activeCamStream = camStream ?? rawCamStream;
 
   useEffect(() => {
     if (camError) {
       toast.error(camError, { duration: 6000 });
     }
   }, [camError]);
-
-  const retryCamera = () => {
-    // Toggling off then back on re-runs the camera hook
-    const prev = cameraMode;
-    setCameraMode("off");
-    setTimeout(() => setCameraMode(prev === "off" ? "overlay" : prev), 100);
-  };
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -76,16 +69,54 @@ export const ScreenRecorder = () => {
   // Live-updating bubble position ref (for the canvas draw loop)
   const bubblePosRef = useRef(bubblePos);
   const bubbleSizeRef = useRef(bubbleSize);
+  const processedCamStreamRef = useRef<MediaStream | null>(camStream);
+  const rawCamStreamRef = useRef<MediaStream | null>(rawCamStream);
   useEffect(() => { bubblePosRef.current = bubblePos; }, [bubblePos]);
   useEffect(() => { bubbleSizeRef.current = bubbleSize; }, [bubbleSize]);
+  useEffect(() => { processedCamStreamRef.current = camStream; }, [camStream]);
+  useEffect(() => { rawCamStreamRef.current = rawCamStream; }, [rawCamStream]);
+
+  const retryCamera = async () => {
+    if (cameraMode === "off") setCameraMode("overlay");
+    await requestCamera();
+  };
+
+  const handleCameraModeChange = async (value: string) => {
+    const nextMode = value as CameraMode;
+    setCameraMode(nextMode);
+
+    if (nextMode === "off") {
+      stopCamera();
+      return;
+    }
+
+    await requestCamera();
+  };
+
+  const ensureCameraStream = async () => {
+    if (processedCamStreamRef.current) return processedCamStreamRef.current;
+    if (bgMode === "none" && rawCamStreamRef.current) return rawCamStreamRef.current;
+
+    const requested = await requestCamera();
+    if (!requested) return null;
+
+    const timeoutAt = performance.now() + 2500;
+    while (performance.now() < timeoutAt) {
+      if (processedCamStreamRef.current) return processedCamStreamRef.current;
+      if (bgMode === "none" && rawCamStreamRef.current) return rawCamStreamRef.current;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+
+    return bgMode === "none" ? rawCamStreamRef.current : processedCamStreamRef.current;
+  };
 
   // Bind processed camera stream to preview <video>
   useEffect(() => {
-    if (camPreviewRef.current && camStream) {
-      camPreviewRef.current.srcObject = camStream;
+    if (camPreviewRef.current && activeCamStream) {
+      camPreviewRef.current.srcObject = activeCamStream;
       camPreviewRef.current.play().catch(() => {});
     }
-  }, [camStream]);
+  }, [activeCamStream]);
 
   useEffect(() => () => stopAll(), []);
 
@@ -98,6 +129,7 @@ export const ScreenRecorder = () => {
     displayStreamRef.current = null;
     micStreamRef.current = null;
     compositeStreamRef.current = null;
+    stopCamera();
     closePip();
   };
 
