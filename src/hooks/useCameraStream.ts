@@ -58,6 +58,7 @@ export const useCameraStream = ({
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const segmenterRef = useRef<SelfieSegmentationType | null>(null);
+  const faceDetectorRef = useRef<FaceDetectionType | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const rawStreamRef = useRef<MediaStream | null>(null);
   const processedStreamRef = useRef<MediaStream | null>(null);
