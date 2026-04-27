@@ -331,14 +331,23 @@ export const useCameraStream = ({
 
         // Processing loop — always runs so canvas mirrors raw video even in "none" mode
         runningRef.current = true;
+        let faceFrame = 0;
         const tick = async () => {
           if (!runningRef.current) return;
           if (video.readyState >= 2) {
-            // Always run segmentation so auto-centering works in every mode.
             try {
               await segmenter.send({ image: video });
             } catch {
               /* ignore */
+            }
+            // Run face detection every other frame (~15fps) — plenty for tracking
+            // and keeps CPU usage reasonable.
+            if (autoCenterRef.current && faceFrame++ % 2 === 0) {
+              try {
+                await faceDetector.send({ image: video });
+              } catch {
+                /* ignore */
+              }
             }
           }
           rafRef.current = requestAnimationFrame(tick);
