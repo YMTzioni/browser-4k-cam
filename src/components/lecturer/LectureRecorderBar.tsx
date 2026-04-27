@@ -85,6 +85,10 @@ export const LectureRecorderBar = ({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [converting, setConverting] = useState(false);
+  const [convertProgress, setConvertProgress] = useState(0); // 0..1
+  const [convertElapsed, setConvertElapsed] = useState(0); // seconds
+  const [convertStage, setConvertStage] = useState<string>("");
+  const convertTimerRef = useRef<number | null>(null);
 
   // Camera appearance options
   const [bgMode, setBgMode] = useState<BackgroundMode>("none");
