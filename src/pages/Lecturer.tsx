@@ -32,7 +32,6 @@ type LoadedPdf = {
 const Lecturer = () => {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [page, setPage] = useState(1);
-  const [thumbs, setThumbs] = useState<string[]>([]);
   const [annotateActive, setAnnotateActive] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
