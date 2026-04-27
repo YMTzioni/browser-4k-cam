@@ -325,6 +325,9 @@ export const LectureRecorderBar = ({
         ...audioTracks,
       ];
       const stream = new MediaStream(tracks);
+      if (withMic && audioTracks.length === 0) {
+        toast.error("Microphone was not attached to the recording stream");
+      }
 
       const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, {
