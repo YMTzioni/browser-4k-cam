@@ -110,6 +110,7 @@ export const LectureRecorderBar = ({
   const { rawStream, processedStream, error: camError, requestCamera, stopCamera } = useCameraStream({
     backgroundMode: bgMode,
     blurAmount,
+    autoCenter,
   });
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
