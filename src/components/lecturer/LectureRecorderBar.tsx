@@ -680,9 +680,10 @@ export const LectureRecorderBar = ({
                 onClick={downloadMp4}
                 disabled={converting}
                 className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
+                title="Export as 4K MP4 (re-encoded for compatibility & audio)"
               >
                 <Download className="size-4" />
-                {converting ? "Converting…" : "MP4"}
+                {converting ? `${Math.round(convertProgress * 100)}%` : "4K MP4"}
               </Button>
               <Button
                 size="sm"
@@ -690,12 +691,35 @@ export const LectureRecorderBar = ({
                 onClick={downloadWebm}
                 disabled={converting}
                 className="gap-2"
+                title="Download original WebM (no re-encode, fastest)"
               >
                 <Download className="size-4" /> WebM
               </Button>
             </>
           )}
         </div>
+
+        {/* Conversion progress panel */}
+        {converting && (
+          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-card/95 backdrop-blur border border-border shadow-xl p-3 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold">{convertStage || "Working…"}</span>
+              <span className="font-mono tabular-nums text-muted-foreground">
+                {Math.round(convertProgress * 100)}%
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-[image:var(--gradient-primary)] transition-[width] duration-300"
+                style={{ width: `${Math.max(2, convertProgress * 100)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono tabular-nums">
+              <span>Elapsed: {formatTime(convertElapsed)}</span>
+              <span>ETA: {formatEta(convertEta)}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {showCamera && (
