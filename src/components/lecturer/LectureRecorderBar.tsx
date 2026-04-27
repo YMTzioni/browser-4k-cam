@@ -20,6 +20,7 @@ import {
   Sparkles,
   RectangleHorizontal,
   Circle as CircleIcon,
+  Focus,
 } from "lucide-react";
 import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
 
@@ -90,6 +91,7 @@ export const LectureRecorderBar = ({
   const [shape, setShape] = useState<CameraShape>("rounded");
   const [bubbleWidth, setBubbleWidth] = useState(240);
   const [mirror, setMirror] = useState(true);
+  const [autoCenter, setAutoCenter] = useState(true);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -108,6 +110,7 @@ export const LectureRecorderBar = ({
   const { rawStream, processedStream, error: camError, requestCamera, stopCamera } = useCameraStream({
     backgroundMode: bgMode,
     blurAmount,
+    autoCenter,
   });
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
@@ -489,6 +492,15 @@ export const LectureRecorderBar = ({
             title="Camera bubble"
           >
             {showCamera ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
+          </Button>
+          <Button
+            size="icon"
+            variant={autoCenter ? "default" : "secondary"}
+            onClick={() => setAutoCenter((v) => !v)}
+            disabled={!showCamera}
+            title={autoCenter ? "Auto-center: ON" : "Auto-center: OFF"}
+          >
+            <Focus className="size-4" />
           </Button>
 
           <Popover>

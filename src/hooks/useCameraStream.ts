@@ -23,6 +23,7 @@ interface Options {
   backgroundMode: BackgroundMode;
   backgroundImageUrl?: string | null;
   blurAmount?: number; // px
+  autoCenter?: boolean;
 }
 
 /**
@@ -34,6 +35,7 @@ export const useCameraStream = ({
   backgroundMode,
   backgroundImageUrl,
   blurAmount = 12,
+  autoCenter = false,
 }: Options) => {
   const [rawStream, setRawStream] = useState<MediaStream | null>(null);
   const [processedStream, setProcessedStream] = useState<MediaStream | null>(null);
@@ -49,6 +51,7 @@ export const useCameraStream = ({
   const runningRef = useRef(false);
   const modeRef = useRef<BackgroundMode>(backgroundMode);
   const blurRef = useRef<number>(blurAmount);
+  const autoCenterRef = useRef<boolean>(autoCenter);
 
   useEffect(() => {
     modeRef.current = backgroundMode;
@@ -56,6 +59,9 @@ export const useCameraStream = ({
   useEffect(() => {
     blurRef.current = blurAmount;
   }, [blurAmount]);
+  useEffect(() => {
+    autoCenterRef.current = autoCenter;
+  }, [autoCenter]);
 
   const getCameraErrorMessage = useCallback(async (e: unknown) => {
     const err = e as { name?: string; message?: string };
@@ -231,16 +237,21 @@ export const useCameraStream = ({
           const h = canvas.height;
           const mode = modeRef.current;
 
-          // Compute person centroid + size and ease toward it.
-          const box = computePersonBox(results.segmentationMask);
-          if (box) {
-            // Target scale: keep person occupying ~70% of the shorter axis.
-            const personSize = Math.max(box.bw, box.bh);
-            const targetScale = Math.min(2.2, Math.max(1, 0.7 / Math.max(0.05, personSize)));
-            // Smooth (lerp)
-            center.x += (box.cx - center.x) * 0.12;
-            center.y += (box.cy - center.y) * 0.12;
-            center.scale += (targetScale - center.scale) * 0.08;
+          if (autoCenterRef.current) {
+            // Compute person centroid + size and ease toward it.
+            const box = computePersonBox(results.segmentationMask);
+            if (box) {
+              const personSize = Math.max(box.bw, box.bh);
+              const targetScale = Math.min(2.2, Math.max(1, 0.7 / Math.max(0.05, personSize)));
+              center.x += (box.cx - center.x) * 0.12;
+              center.y += (box.cy - center.y) * 0.12;
+              center.scale += (targetScale - center.scale) * 0.08;
+            }
+          } else {
+            // Ease back to a neutral, full-frame view.
+            center.x += (0.5 - center.x) * 0.2;
+            center.y += (0.5 - center.y) * 0.2;
+            center.scale += (1 - center.scale) * 0.2;
           }
 
           // Crop window in source coords keeping person centered.
