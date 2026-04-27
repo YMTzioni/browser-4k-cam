@@ -257,16 +257,18 @@ export const useCameraStream = ({
           const mode = modeRef.current;
 
           if (autoCenterRef.current) {
-            // Compute person bbox + face-biased center and ease toward it.
-            const box = computePersonBox(results.segmentationMask);
+            // Use the latest face box from FaceDetection.
+            const box = faceBoxRef.current;
             if (box) {
-              // Use the WIDTH of the person to drive zoom (head width is a more
-              // stable proxy for "how big should the face appear"). Aim for the
-              // person to fill ~55% of the frame width => stronger zoom-in.
-              const targetScale = Math.min(3.0, Math.max(1.1, 0.55 / Math.max(0.05, box.bw)));
-              center.x += (box.cx - center.x) * 0.2;
-              center.y += (box.cy - center.y) * 0.2;
-              center.scale += (targetScale - center.scale) * 0.12;
+              // Aim for the FACE to fill ~32% of frame width — strong but
+              // comfortable head-and-shoulders framing. Clamp scale 1.2..3.5.
+              const targetScale = Math.min(3.5, Math.max(1.2, 0.32 / Math.max(0.04, box.bw)));
+              // Add a small downward offset so the face sits a bit above
+              // vertical center (headroom looks more natural than dead-center).
+              const targetY = box.cy + box.bh * 0.1;
+              center.x += (box.cx - center.x) * 0.22;
+              center.y += (targetY - center.y) * 0.22;
+              center.scale += (targetScale - center.scale) * 0.14;
             }
           } else {
             // Ease back to a neutral, full-frame view.
