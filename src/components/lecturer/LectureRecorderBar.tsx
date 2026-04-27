@@ -445,8 +445,23 @@ export const LectureRecorderBar = ({
           {previewUrl && !recording && (
             <>
               <div className="w-px h-6 bg-border mx-1" />
-              <Button size="sm" variant="secondary" onClick={download} className="gap-2">
-                <Download className="size-4" /> Download
+              <Button
+                size="sm"
+                onClick={downloadMp4}
+                disabled={converting}
+                className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
+              >
+                <Download className="size-4" />
+                {converting ? "Converting…" : "MP4"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={downloadWebm}
+                disabled={converting}
+                className="gap-2"
+              >
+                <Download className="size-4" /> WebM
               </Button>
             </>
           )}
