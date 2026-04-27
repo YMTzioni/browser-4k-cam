@@ -48,7 +48,7 @@ const Lecturer = () => {
       const doc = await pdfjsLib.getDocument({ data: buf }).promise;
       setPdf({ doc, name: file.name, numPages: doc.numPages });
       setPage(1);
-      setThumbs([]);
+      
       toast.success(`Loaded ${file.name} (${doc.numPages} pages)`);
     } catch (err) {
       console.error(err);
