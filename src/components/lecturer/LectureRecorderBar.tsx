@@ -150,19 +150,23 @@ export const LectureRecorderBar = ({
     micStreamRef.current = null;
   };
 
-  // Prefer MP4/H.264 directly from MediaRecorder when the browser supports it
-  // (Safari + recent Chrome). This avoids the costly WebM→MP4 transcode entirely.
+  // Prefer WebM (Opus audio) — Chrome's MP4 MediaRecorder can drop the audio
+  // track in some configurations. WebM reliably embeds audio+video; we
+  // transcode to high-quality 4K MP4 on download via FFmpeg.
   const pickMimeType = () => {
     const candidates = [
-      "video/mp4;codecs=h264,aac",
-      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-      "video/mp4",
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=h264,opus",
       "video/webm",
+      "video/mp4;codecs=h264,aac",
+      "video/mp4",
     ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
+
+  // Target output resolution: up to 4K (3840 wide), preserving stage aspect.
+  const TARGET_OUTPUT_WIDTH = 3840;
 
   const start = async () => {
     const stage = stageRef.current;
