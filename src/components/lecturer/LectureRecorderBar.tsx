@@ -393,18 +393,25 @@ export const LectureRecorderBar = ({
     if (previewUrl) triggerDownload(previewUrl, "webm");
   };
 
+  const formatEta = (s: number) => {
+    if (!isFinite(s) || s <= 0) return "—";
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s % 60);
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+
   const downloadMp4 = async () => {
     if (!previewBlob) return;
-    // Fast path: the recorder already produced MP4 — just download it.
-    if (previewBlob.type === "video/mp4" || previewBlob.type.startsWith("video/mp4")) {
-      const url = URL.createObjectURL(previewBlob);
-      triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      toast.success("MP4 ready");
-      return;
-    }
     setConverting(true);
-    const t = toast.loading("Converting to MP4…");
+    setConvertProgress(0);
+    setConvertElapsed(0);
+    setConvertStage("Loading encoder…");
+    const startedAt = Date.now();
+    if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
+    convertTimerRef.current = window.setInterval(() => {
+      setConvertElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
     try {
       const { FFmpeg } = await import("@ffmpeg/ffmpeg");
       const { fetchFile } = await import("@ffmpeg/util");
@@ -414,36 +421,62 @@ export const LectureRecorderBar = ({
         coreURL: `${base}/ffmpeg-core.js`,
         wasmURL: `${base}/ffmpeg-core.wasm`,
       });
-      await ffmpeg.writeFile("in.webm", await fetchFile(previewBlob));
-      // Use ultrafast preset + higher CRF for ~3-5x faster encoding in the
-      // browser. Quality is still very good for slide+webcam content.
+
+      // Real progress from FFmpeg (0..1).
+      ffmpeg.on("progress", ({ progress }) => {
+        if (typeof progress === "number" && progress >= 0) {
+          setConvertProgress(Math.min(1, progress));
+          setConvertStage("Encoding 4K MP4…");
+        }
+      });
+
+      const inputName = previewBlob.type.includes("mp4") ? "in.mp4" : "in.webm";
+      setConvertStage("Reading source…");
+      await ffmpeg.writeFile(inputName, await fetchFile(previewBlob));
+
+      setConvertStage("Encoding 4K MP4…");
+      // High quality 4K H.264 + AAC. veryfast = good balance of speed/quality
+      // in WASM. We always re-mux to guarantee audio is present in the MP4.
       await ffmpeg.exec([
-        "-i", "in.webm",
+        "-i", inputName,
         "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-crf", "26",
+        "-preset", "veryfast",
+        "-crf", "20",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "192k",
+        "-ac", "2",
         "-movflags", "+faststart",
         "out.mp4",
       ]);
+
+      setConvertStage("Finalizing…");
       const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
       const buf = new Uint8Array(data).buffer;
       const mp4Blob = new Blob([buf], { type: "video/mp4" });
       const url = URL.createObjectURL(mp4Blob);
       triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      toast.success("MP4 ready", { id: t });
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setConvertProgress(1);
+      setConvertStage("Done");
+      toast.success(`4K MP4 ready (${formatEta(Math.floor((Date.now() - startedAt) / 1000))})`);
     } catch (err) {
       console.error(err);
-      toast.error("MP4 conversion failed — downloading WebM instead", { id: t });
+      toast.error("MP4 conversion failed — downloading WebM instead");
       downloadWebm();
     } finally {
+      if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
+      convertTimerRef.current = null;
       setConverting(false);
     }
   };
+
+  // Estimate remaining time from progress + elapsed.
+  const convertEta =
+    convertProgress > 0.02 && convertProgress < 1
+      ? Math.max(0, convertElapsed / convertProgress - convertElapsed)
+      : 0;
+
 
   return (
     <>
