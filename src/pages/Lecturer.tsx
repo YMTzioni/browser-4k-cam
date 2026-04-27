@@ -5,8 +5,6 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
   FileUp,
   Maximize2,
   Pencil,
