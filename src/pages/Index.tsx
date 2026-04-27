@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Presentation } from "lucide-react";
 import { ScreenRecorder } from "@/components/ScreenRecorder";

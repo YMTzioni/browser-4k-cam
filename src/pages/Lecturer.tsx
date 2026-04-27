@@ -147,9 +147,14 @@ const Lecturer = () => {
   }, [pdf]);
 
   const enterFullscreen = () => {
-    stageRef.current?.requestFullscreen?.().catch(() => {
-      toast.error("Fullscreen not available");
-    });
+    const el = document.documentElement;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      el.requestFullscreen?.().catch(() => {
+        toast.error("Fullscreen not available");
+      });
+    }
   };
 
   return (
