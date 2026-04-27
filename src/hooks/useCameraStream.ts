@@ -206,30 +206,34 @@ export const useCameraStream = ({
         const mctx = maskAnalyzer.getContext("2d", { willReadFrequently: true })!;
 
         const computePersonBox = (mask: CanvasImageSource) => {
-          mctx.clearRect(0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          mctx.drawImage(mask, 0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          const { data } = mctx.getImageData(0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          let sumX = 0, sumY = 0, count = 0;
-          let minX = maskAnalyzer.width, maxX = 0, minY = maskAnalyzer.height, maxY = 0;
-          for (let y = 0; y < maskAnalyzer.height; y++) {
-            for (let x = 0; x < maskAnalyzer.width; x++) {
-              const i = (y * maskAnalyzer.width + x) * 4;
-              // MediaPipe mask: high alpha or high red = person.
+          const mw = maskAnalyzer.width;
+          const mh = maskAnalyzer.height;
+          mctx.clearRect(0, 0, mw, mh);
+          mctx.drawImage(mask, 0, 0, mw, mh);
+          const { data } = mctx.getImageData(0, 0, mw, mh);
+          let count = 0;
+          let minX = mw, maxX = 0, minY = mh, maxY = 0;
+          for (let y = 0; y < mh; y++) {
+            for (let x = 0; x < mw; x++) {
+              const i = (y * mw + x) * 4;
               const v = data[i] || data[i + 3];
               if (v > 128) {
-                sumX += x; sumY += y; count++;
+                count++;
                 if (x < minX) minX = x; if (x > maxX) maxX = x;
                 if (y < minY) minY = y; if (y > maxY) maxY = y;
               }
             }
           }
           if (count < 50) return null;
-          return {
-            cx: sumX / count / maskAnalyzer.width,
-            cy: sumY / count / maskAnalyzer.height,
-            bw: (maxX - minX) / maskAnalyzer.width,
-            bh: (maxY - minY) / maskAnalyzer.height,
-          };
+          // Use bounding box center horizontally; bias vertically toward the
+          // TOP of the box (head/face area) so the camera centers on the face,
+          // not the torso/centroid of the whole silhouette.
+          const bw = (maxX - minX) / mw;
+          const bh = (maxY - minY) / mh;
+          const cx = (minX + maxX) / 2 / mw;
+          // Face is roughly the top ~22% of the person box.
+          const cy = (minY / mh) + bh * 0.22;
+          return { cx, cy, bw, bh };
         };
 
         segmenter.onResults((results: Results) => {
@@ -238,14 +242,16 @@ export const useCameraStream = ({
           const mode = modeRef.current;
 
           if (autoCenterRef.current) {
-            // Compute person centroid + size and ease toward it.
+            // Compute person bbox + face-biased center and ease toward it.
             const box = computePersonBox(results.segmentationMask);
             if (box) {
-              const personSize = Math.max(box.bw, box.bh);
-              const targetScale = Math.min(2.2, Math.max(1, 0.7 / Math.max(0.05, personSize)));
-              center.x += (box.cx - center.x) * 0.12;
-              center.y += (box.cy - center.y) * 0.12;
-              center.scale += (targetScale - center.scale) * 0.08;
+              // Use the WIDTH of the person to drive zoom (head width is a more
+              // stable proxy for "how big should the face appear"). Aim for the
+              // person to fill ~55% of the frame width => stronger zoom-in.
+              const targetScale = Math.min(3.0, Math.max(1.1, 0.55 / Math.max(0.05, box.bw)));
+              center.x += (box.cx - center.x) * 0.2;
+              center.y += (box.cy - center.y) * 0.2;
+              center.scale += (targetScale - center.scale) * 0.12;
             }
           } else {
             // Ease back to a neutral, full-frame view.
