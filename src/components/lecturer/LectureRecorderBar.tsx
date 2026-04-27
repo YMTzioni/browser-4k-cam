@@ -145,8 +145,17 @@ export const LectureRecorderBar = ({
     micStreamRef.current = null;
   };
 
+  // Prefer MP4/H.264 directly from MediaRecorder when the browser supports it
+  // (Safari + recent Chrome). This avoids the costly WebM→MP4 transcode entirely.
   const pickMimeType = () => {
-    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    const candidates = [
+      "video/mp4;codecs=h264,aac",
+      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4",
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
 
