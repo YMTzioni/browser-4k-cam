@@ -192,56 +192,17 @@ const Lecturer = () => {
           </Card>
         </div>
       ) : (
-        <div className="grid grid-cols-[180px_1fr] gap-4 p-4 h-[calc(100vh-65px)]">
-          {/* Thumbnails */}
-          <aside className="overflow-y-auto space-y-2 pr-1">
-            {Array.from({ length: pdf.numPages }).map((_, i) => {
-              const n = i + 1;
-              const src = thumbs[i];
-              const active = n === page;
-              return (
-                <button
-                  key={n}
-                  onClick={() => setPage(n)}
-                  className={`block w-full rounded-md overflow-hidden border-2 transition ${
-                    active ? "border-primary shadow-[var(--shadow-glow)]" : "border-border/50 hover:border-border"
-                  }`}
-                  aria-label={`Go to page ${n}`}
-                >
-                  {src ? (
-                    <img src={src} alt={`Page ${n}`} className="w-full block bg-white" />
-                  ) : (
-                    <div className="w-full aspect-[3/4] bg-muted animate-pulse" />
-                  )}
-                  <div className="text-[10px] text-center py-0.5 bg-card text-muted-foreground">{n}</div>
-                </button>
-              );
-            })}
-          </aside>
-
-          {/* Stage */}
-          <section className="relative flex flex-col">
+        <div className="p-4 h-[calc(100vh-65px)]">
+          {/* Stage (full width — slide nav lives in the recorder toolbar) */}
+          <section className="relative flex flex-col h-full">
             <div
               ref={stageRef}
               className="relative flex-1 rounded-lg bg-black/90 flex items-center justify-center overflow-hidden"
             >
               <canvas ref={canvasRef} className="shadow-2xl bg-white" />
-
-              {/* Floating nav inside stage */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-card/95 backdrop-blur border border-border shadow-lg">
-                <Button size="icon" variant="ghost" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
-                  <ChevronLeft className="size-4" />
-                </Button>
-                <span className="text-sm font-mono tabular-nums px-2">
-                  {page} / {pdf.numPages}
-                </span>
-                <Button size="icon" variant="ghost" onClick={() => setPage((p) => Math.min(pdf.numPages, p + 1))} disabled={page === pdf.numPages}>
-                  <ChevronRight className="size-4" />
-                </Button>
-              </div>
             </div>
             <p className="text-xs text-muted-foreground mt-2 text-center">
-              Tip: ← → to navigate · Space for next · go to <Link to="/" className="underline">Recorder</Link> and share this tab to record the lecture.
+              ← → to navigate · Space for next · use the toolbar below to record this view directly.
             </p>
           </section>
         </div>
@@ -256,6 +217,13 @@ const Lecturer = () => {
       <LectureRecorderBar
         showCamera={showCamera}
         onToggleCamera={() => setShowCamera((s) => !s)}
+        pdfCanvasRef={canvasRef}
+        stageRef={stageRef}
+        getAnnotationCanvas={() => annotationRef.current?.getCanvas() ?? null}
+        page={page}
+        totalPages={pdf?.numPages ?? 0}
+        onPrevPage={() => setPage((p) => Math.max(1, p - 1))}
+        onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
       />
     </main>
   );
