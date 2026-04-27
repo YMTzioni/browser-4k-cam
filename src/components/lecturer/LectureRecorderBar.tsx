@@ -217,7 +217,7 @@ export const LectureRecorderBar = ({
           cctx.stroke();
         }
 
-        rafRef.current = requestAnimationFrame(drawFrame);
+        
       };
       // Use a fixed-rate timer instead of rAF — rAF is throttled when the tab
       // loses focus or when expensive layout work happens, which causes the
