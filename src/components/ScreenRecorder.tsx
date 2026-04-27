@@ -6,8 +6,9 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles } from "lucide-react";
+import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles, Pencil } from "lucide-react";
 import { useCameraStream, BackgroundMode } from "@/hooks/useCameraStream";
+import { AnnotationOverlay, AnnotationOverlayHandle } from "@/components/lecturer/AnnotationOverlay";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
 type CameraMode = "off" | "overlay" | "only";
@@ -38,6 +39,8 @@ export const ScreenRecorder = () => {
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [pipActive, setPipActive] = useState(false);
+  const [annotateActive, setAnnotateActive] = useState(false);
+  const annotationRef = useRef<AnnotationOverlayHandle | null>(null);
 
   // Bubble position in NORMALIZED coords (0..1) relative to the screen capture
   const [bubblePos, setBubblePos] = useState({ x: 0.76, y: 0.76 }); // top-left
