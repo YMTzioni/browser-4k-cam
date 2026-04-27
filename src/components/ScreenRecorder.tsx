@@ -6,8 +6,9 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles } from "lucide-react";
+import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles, Pencil } from "lucide-react";
 import { useCameraStream, BackgroundMode } from "@/hooks/useCameraStream";
+import { AnnotationOverlay, AnnotationOverlayHandle } from "@/components/lecturer/AnnotationOverlay";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
 type CameraMode = "off" | "overlay" | "only";
@@ -38,6 +39,8 @@ export const ScreenRecorder = () => {
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [pipActive, setPipActive] = useState(false);
+  const [annotateActive, setAnnotateActive] = useState(false);
+  const annotationRef = useRef<AnnotationOverlayHandle | null>(null);
 
   // Bubble position in NORMALIZED coords (0..1) relative to the screen capture
   const [bubblePos, setBubblePos] = useState({ x: 0.76, y: 0.76 }); // top-left
@@ -241,10 +244,12 @@ export const ScreenRecorder = () => {
       }
 
       let recordStream: MediaStream;
+      const useCompositor =
+        cameraMode === "overlay" || (annotateActive && !!displayStream && cameraMode !== "only");
 
-      if (cameraMode === "overlay" && displayStream && cameraRecordStream) {
+      if (useCompositor && displayStream) {
         const screenVideo = await playVideo(displayStream);
-        const camVideo = await playVideo(cameraRecordStream);
+        const camVideo = cameraRecordStream ? await playVideo(cameraRecordStream) : null;
 
         const screenTrack = displayStream.getVideoTracks()[0];
         const settings = screenTrack.getSettings();
@@ -258,15 +263,19 @@ export const ScreenRecorder = () => {
 
         const draw = () => {
           ctx.drawImage(screenVideo, 0, 0, canvasW, canvasH);
-          // Live bubble position from refs (updates in real time during recording)
-          const bw = Math.round(canvasW * bubbleSizeRef.current);
-          const bh = Math.round((bw * 9) / 16);
-          const bx = Math.round(canvasW * bubblePosRef.current.x);
-          const by = Math.round(canvasH * bubblePosRef.current.y);
-          // shadow border
-          ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.fillRect(bx - 4, by - 4, bw + 8, bh + 8);
-          ctx.drawImage(camVideo, bx, by, bw, bh);
+          if (camVideo && cameraMode === "overlay") {
+            const bw = Math.round(canvasW * bubbleSizeRef.current);
+            const bh = Math.round((bw * 9) / 16);
+            const bx = Math.round(canvasW * bubblePosRef.current.x);
+            const by = Math.round(canvasH * bubblePosRef.current.y);
+            ctx.fillStyle = "rgba(0,0,0,0.5)";
+            ctx.fillRect(bx - 4, by - 4, bw + 8, bh + 8);
+            ctx.drawImage(camVideo, bx, by, bw, bh);
+          }
+          const annCanvas = annotationRef.current?.getCanvas();
+          if (annotateActive && annCanvas && annCanvas.width > 0) {
+            ctx.drawImage(annCanvas, 0, 0, canvasW, canvasH);
+          }
           rafRef.current = requestAnimationFrame(draw);
         };
         draw();
@@ -408,8 +417,26 @@ export const ScreenRecorder = () => {
               <Square className="mr-2" fill="currentColor" /> Stop Recording
             </Button>
           )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant={annotateActive ? "default" : "secondary"}
+              size="sm"
+              onClick={() => setAnnotateActive((a) => !a)}
+              className="gap-2"
+            >
+              <Pencil className="size-4" />
+              {annotateActive ? "Hide annotations" : "Annotate screen"}
+            </Button>
+          </div>
         </div>
       </Card>
+
+      <AnnotationOverlay
+        ref={annotationRef}
+        active={annotateActive}
+        onClose={() => setAnnotateActive(false)}
+      />
 
       {/* Live camera preview & overlay positioner */}
       {cameraMode !== "off" && (
