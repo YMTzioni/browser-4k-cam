@@ -665,15 +665,22 @@ const DraggableCameraBubble = forwardRef<
     videoRef: React.MutableRefObject<HTMLVideoElement | null>;
     hasStream: boolean;
     recording: boolean;
+    shape: CameraShape;
+    width: number;
+    onWidthChange: (w: number) => void;
+    mirror: boolean;
   }
->(({ videoRef, hasStream, recording }, ref) => {
+>(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror }, ref) => {
   const [pos, setPos] = useState(() => ({
     x: window.innerWidth - 280,
     y: window.innerHeight - 240,
   }));
-  const [width, setWidth] = useState(240);
   const draggingRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizingRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  // Aspect ratio per shape — circle is 1:1, others 16:9.
+  const aspect = shape === "circle" ? 1 : 16 / 9;
+  const height = width / aspect;
 
   const onPointerDown = (e: React.PointerEvent) => {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -683,15 +690,14 @@ const DraggableCameraBubble = forwardRef<
     if (resizingRef.current) {
       const r = resizingRef.current;
       const next = Math.max(140, Math.min(520, r.startW + (e.clientX - r.startX)));
-      setWidth(next);
+      onWidthChange(next);
       return;
     }
     if (!draggingRef.current) return;
     const d = draggingRef.current;
-    const h = (width * 9) / 16;
     setPos({
       x: Math.max(0, Math.min(window.innerWidth - width, e.clientX - d.dx)),
-      y: Math.max(0, Math.min(window.innerHeight - h, e.clientY - d.dy)),
+      y: Math.max(0, Math.min(window.innerHeight - height, e.clientY - d.dy)),
     });
   };
   const onPointerUp = () => {
@@ -705,6 +711,9 @@ const DraggableCameraBubble = forwardRef<
     resizingRef.current = { startX: e.clientX, startW: width };
   };
 
+  const shapeClass =
+    shape === "circle" ? "rounded-full" : shape === "rectangle" ? "rounded-none" : "rounded-xl";
+
   return (
     <div
       ref={ref}
@@ -712,8 +721,8 @@ const DraggableCameraBubble = forwardRef<
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className="fixed z-50 rounded-xl overflow-hidden shadow-2xl ring-2 ring-primary cursor-grab active:cursor-grabbing select-none"
-      style={{ left: pos.x, top: pos.y, width, aspectRatio: "16 / 9" }}
+      className={`fixed z-50 overflow-hidden shadow-2xl ring-2 ring-primary cursor-grab active:cursor-grabbing select-none ${shapeClass}`}
+      style={{ left: pos.x, top: pos.y, width, height }}
     >
       {hasStream ? (
         <video
@@ -722,6 +731,7 @@ const DraggableCameraBubble = forwardRef<
           muted
           playsInline
           className="w-full h-full object-cover bg-black pointer-events-none"
+          style={mirror ? { transform: "scaleX(-1)" } : undefined}
         />
       ) : (
         <div className="w-full h-full grid place-items-center bg-black/80 text-xs text-muted-foreground">
