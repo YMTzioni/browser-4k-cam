@@ -35,6 +35,7 @@ export const useCameraStream = ({
   backgroundMode,
   backgroundImageUrl,
   blurAmount = 12,
+  autoCenter = false,
 }: Options) => {
   const [rawStream, setRawStream] = useState<MediaStream | null>(null);
   const [processedStream, setProcessedStream] = useState<MediaStream | null>(null);
@@ -50,6 +51,7 @@ export const useCameraStream = ({
   const runningRef = useRef(false);
   const modeRef = useRef<BackgroundMode>(backgroundMode);
   const blurRef = useRef<number>(blurAmount);
+  const autoCenterRef = useRef<boolean>(autoCenter);
 
   useEffect(() => {
     modeRef.current = backgroundMode;
@@ -57,6 +59,9 @@ export const useCameraStream = ({
   useEffect(() => {
     blurRef.current = blurAmount;
   }, [blurAmount]);
+  useEffect(() => {
+    autoCenterRef.current = autoCenter;
+  }, [autoCenter]);
 
   const getCameraErrorMessage = useCallback(async (e: unknown) => {
     const err = e as { name?: string; message?: string };
