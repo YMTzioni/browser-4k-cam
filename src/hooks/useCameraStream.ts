@@ -242,14 +242,16 @@ export const useCameraStream = ({
           const mode = modeRef.current;
 
           if (autoCenterRef.current) {
-            // Compute person centroid + size and ease toward it.
+            // Compute person bbox + face-biased center and ease toward it.
             const box = computePersonBox(results.segmentationMask);
             if (box) {
-              const personSize = Math.max(box.bw, box.bh);
-              const targetScale = Math.min(2.2, Math.max(1, 0.7 / Math.max(0.05, personSize)));
-              center.x += (box.cx - center.x) * 0.12;
-              center.y += (box.cy - center.y) * 0.12;
-              center.scale += (targetScale - center.scale) * 0.08;
+              // Use the WIDTH of the person to drive zoom (head width is a more
+              // stable proxy for "how big should the face appear"). Aim for the
+              // person to fill ~55% of the frame width => stronger zoom-in.
+              const targetScale = Math.min(3.0, Math.max(1.1, 0.55 / Math.max(0.05, box.bw)));
+              center.x += (box.cx - center.x) * 0.2;
+              center.y += (box.cy - center.y) * 0.2;
+              center.scale += (targetScale - center.scale) * 0.12;
             }
           } else {
             // Ease back to a neutral, full-frame view.
