@@ -20,6 +20,7 @@ import {
   Sparkles,
   RectangleHorizontal,
   Circle as CircleIcon,
+  Focus,
 } from "lucide-react";
 import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
 
