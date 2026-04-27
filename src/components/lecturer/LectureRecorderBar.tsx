@@ -787,3 +787,165 @@ const DraggableCameraBubble = forwardRef<
   );
 });
 DraggableCameraBubble.displayName = "DraggableCameraBubble";
+
+/**
+ * Mic test: opens a popover with a live input level meter and device picker so
+ * the lecturer can verify their mic before recording. The mic stream is fully
+ * stopped when the popover closes.
+ */
+const MicTestButton = ({ disabled }: { disabled?: boolean }) => {
+  const [open, setOpen] = useState(false);
+  const [level, setLevel] = useState(0); // 0..1
+  const [error, setError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  const streamRef = useRef<MediaStream | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const peakRef = useRef(0);
+
+  const stop = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    ctxRef.current?.close().catch(() => {});
+    ctxRef.current = null;
+    setLevel(0);
+    peakRef.current = 0;
+  };
+
+  const start = async (id?: string) => {
+    stop();
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: id ? { exact: id } : undefined,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      streamRef.current = stream;
+      const ctx = new AudioContext();
+      ctxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        const norm = Math.min(1, rms * 4); // gentle gain for visibility
+        peakRef.current = Math.max(peakRef.current * 0.92, norm);
+        setLevel(peakRef.current);
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+      // Refresh device list (labels become available after permission)
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        setDevices(list.filter((d) => d.kind === "audioinput"));
+      } catch { /* ignore */ }
+    } catch (err) {
+      console.error(err);
+      setError("Microphone permission denied");
+    }
+  };
+
+  useEffect(() => {
+    if (open) start(deviceId);
+    else stop();
+    return () => stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const handleDeviceChange = (id: string) => {
+    setDeviceId(id);
+    start(id);
+  };
+
+  // Build segmented meter
+  const segments = 16;
+  const filled = Math.round(level * segments);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          size="icon"
+          variant="ghost"
+          disabled={disabled}
+          title="Test microphone"
+        >
+          <Volume2 className="size-4" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-72 p-4 space-y-3">
+        <div className="space-y-1">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Microphone test
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            Speak to see the input level. Green = good signal.
+          </p>
+        </div>
+
+        {error ? (
+          <div className="text-xs text-destructive">{error}</div>
+        ) : (
+          <>
+            <div className="flex items-center gap-1 h-8">
+              {Array.from({ length: segments }).map((_, i) => {
+                const active = i < filled;
+                const color =
+                  i < segments * 0.6
+                    ? "bg-green-500"
+                    : i < segments * 0.85
+                    ? "bg-yellow-500"
+                    : "bg-red-500";
+                return (
+                  <div
+                    key={i}
+                    className={`flex-1 h-full rounded-sm transition-opacity ${
+                      active ? color : "bg-muted"
+                    }`}
+                    style={{ opacity: active ? 1 : 0.4 }}
+                  />
+                );
+              })}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {level < 0.02
+                ? "No sound detected — try speaking louder"
+                : level < 0.6
+                ? "Mic is working ✓"
+                : "Loud — consider lowering input volume"}
+            </div>
+
+            {devices.length > 1 && (
+              <div className="space-y-1">
+                <Label className="text-xs">Input device</Label>
+                <select
+                  className="w-full text-xs bg-background border border-border rounded-md px-2 py-1.5"
+                  value={deviceId ?? devices[0]?.deviceId ?? ""}
+                  onChange={(e) => handleDeviceChange(e.target.value)}
+                >
+                  {devices.map((d) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+};
