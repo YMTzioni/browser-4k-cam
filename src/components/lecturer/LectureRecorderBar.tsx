@@ -219,39 +219,63 @@ export const LectureRecorderBar = ({
 
         rafRef.current = requestAnimationFrame(drawFrame);
       };
+      // Use a fixed-rate timer instead of rAF — rAF is throttled when the tab
+      // loses focus or when expensive layout work happens, which causes the
+      // recorded video to "skip". setInterval gives us a steady cadence.
+      const FPS = 30;
       drawFrame();
+      drawIntervalRef.current = window.setInterval(drawFrame, 1000 / FPS);
 
-      const composerStream = composer.captureStream(30);
+      const composerStream = composer.captureStream(FPS);
       composerStreamRef.current = composerStream;
 
+      // Build a single mixed audio track via WebAudio so the recorder receives
+      // a continuous, gap-free audio stream (avoids muted segments when tracks
+      // are added/removed or briefly stall).
+      const audioTracks: MediaStreamTrack[] = [];
       if (withMic) {
         try {
           micStreamRef.current = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true },
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+            },
           });
+          const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+          audioCtxRef.current = ctx;
+          const dest = ctx.createMediaStreamDestination();
+          const src = ctx.createMediaStreamSource(micStreamRef.current);
+          src.connect(dest);
+          dest.stream.getAudioTracks().forEach((t) => audioTracks.push(t));
         } catch {
           toast.error("Microphone denied — recording without mic");
         }
       }
 
-      const tracks: MediaStreamTrack[] = [...composerStream.getVideoTracks()];
-      micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
+      const tracks: MediaStreamTrack[] = [
+        ...composerStream.getVideoTracks(),
+        ...audioTracks,
+      ];
       const stream = new MediaStream(tracks);
 
       const recorder = new MediaRecorder(stream, {
         mimeType: pickMimeType(),
-        videoBitsPerSecond: 8_000_000,
+        videoBitsPerSecond: 6_000_000,
         audioBitsPerSecond: 128_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        setPreviewBlob(blob);
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
       };
 
-      recorder.start(1000);
+      // Larger timeslice = fewer chunk boundaries = smoother playback.
+      recorder.start(2000);
       recorderRef.current = recorder;
       setRecording(true);
       setPaused(false);
