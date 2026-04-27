@@ -5,9 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Circle, Square, Download, Monitor, Mic, Video } from "lucide-react";
+import { Circle, Square, Download, Monitor, Mic, Video, Camera } from "lucide-react";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
+type CameraMode = "off" | "overlay" | "only";
 
 const RES_MAP: Record<Resolution, { w: number; h: number; label: string }> = {
   "2160": { w: 3840, h: 2160, label: "4K UHD (3840×2160)" },
@@ -27,14 +28,18 @@ export const ScreenRecorder = () => {
   const [resolution, setResolution] = useState<Resolution>("2160");
   const [fps, setFps] = useState<"30" | "60">("60");
   const [withMic, setWithMic] = useState(false);
+  const [cameraMode, setCameraMode] = useState<CameraMode>("off");
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
+  const camStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const compositeStreamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -44,10 +49,15 @@ export const ScreenRecorder = () => {
 
   const stopAll = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    displayStreamRef.current?.getTracks().forEach((t) => t.stop());
+    camStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
+    compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
+    displayStreamRef.current = null;
+    camStreamRef.current = null;
     micStreamRef.current = null;
+    compositeStreamRef.current = null;
   };
 
   const pickMimeType = () => {
@@ -59,44 +69,122 @@ export const ScreenRecorder = () => {
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
 
+  const playVideo = (stream: MediaStream) => {
+    const v = document.createElement("video");
+    v.srcObject = stream;
+    v.muted = true;
+    v.playsInline = true;
+    return v.play().then(() => v).catch(() => v);
+  };
+
   const startRecording = async () => {
     try {
       const { w, h } = RES_MAP[resolution];
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: w },
-          height: { ideal: h },
-          frameRate: { ideal: Number(fps) },
-        },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          sampleRate: 48000,
-        },
-      });
+      const frameRate = Number(fps);
 
-      let combined = displayStream;
+      // Acquire streams
+      let displayStream: MediaStream | null = null;
+      let camStream: MediaStream | null = null;
+
+      if (cameraMode !== "only") {
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: w },
+            height: { ideal: h },
+            frameRate: { ideal: frameRate },
+          },
+          audio: { echoCancellation: false, noiseSuppression: false, sampleRate: 48000 },
+        });
+        displayStreamRef.current = displayStream;
+      }
+
+      if (cameraMode !== "off") {
+        try {
+          camStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: cameraMode === "only" ? w : 1280 },
+              height: { ideal: cameraMode === "only" ? h : 720 },
+              frameRate: { ideal: frameRate },
+            },
+          });
+          camStreamRef.current = camStream;
+        } catch {
+          toast.error("Camera access denied");
+          stopAll();
+          return;
+        }
+      }
+
+      // Mic
       if (withMic) {
         try {
           const mic = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 },
           });
           micStreamRef.current = mic;
-          const tracks = [
-            ...displayStream.getVideoTracks(),
-            ...displayStream.getAudioTracks(),
-            ...mic.getAudioTracks(),
-          ];
-          combined = new MediaStream(tracks);
         } catch {
           toast.error("Microphone access denied — recording without mic");
         }
       }
 
-      streamRef.current = combined;
+      // Build the recording stream
+      let recordStream: MediaStream;
+
+      if (cameraMode === "overlay" && displayStream && camStream) {
+        // Composite screen + camera PiP onto a canvas
+        const screenVideo = await playVideo(displayStream);
+        const camVideo = await playVideo(camStream);
+
+        const screenTrack = displayStream.getVideoTracks()[0];
+        const settings = screenTrack.getSettings();
+        const canvasW = settings.width || w;
+        const canvasH = settings.height || h;
+
+        const canvas = document.createElement("canvas");
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+        const ctx = canvas.getContext("2d")!;
+
+        const draw = () => {
+          ctx.drawImage(screenVideo, 0, 0, canvasW, canvasH);
+          // Camera PiP — bottom-right, ~22% width, 16:9
+          const camW = Math.round(canvasW * 0.22);
+          const camH = Math.round(camW * 9 / 16);
+          const margin = Math.round(canvasW * 0.015);
+          const x = canvasW - camW - margin;
+          const y = canvasH - camH - margin;
+          // Border
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.fillRect(x - 4, y - 4, camW + 8, camH + 8);
+          ctx.drawImage(camVideo, x, y, camW, camH);
+          rafRef.current = requestAnimationFrame(draw);
+        };
+        draw();
+
+        const canvasStream = canvas.captureStream(frameRate);
+        const tracks: MediaStreamTrack[] = [canvasStream.getVideoTracks()[0]];
+        displayStream.getAudioTracks().forEach((t) => tracks.push(t));
+        micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
+        recordStream = new MediaStream(tracks);
+        compositeStreamRef.current = recordStream;
+      } else if (cameraMode === "only" && camStream) {
+        const tracks: MediaStreamTrack[] = [...camStream.getVideoTracks()];
+        micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
+        recordStream = new MediaStream(tracks);
+      } else if (displayStream) {
+        const tracks: MediaStreamTrack[] = [
+          ...displayStream.getVideoTracks(),
+          ...displayStream.getAudioTracks(),
+        ];
+        micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
+        recordStream = new MediaStream(tracks);
+      } else {
+        toast.error("No source selected");
+        return;
+      }
 
       const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(combined, {
+      const recorder = new MediaRecorder(recordStream, {
         mimeType,
         videoBitsPerSecond: 8_000_000,
         audioBitsPerSecond: 128_000,
@@ -108,13 +196,14 @@ export const ScreenRecorder = () => {
       };
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
+        setPreviewUrl(URL.createObjectURL(blob));
         stopAll();
       };
 
-      // Stop if user cancels via browser UI
-      displayStream.getVideoTracks()[0].addEventListener("ended", () => {
+      // Auto-stop if user cancels via browser UI
+      const primaryVideo =
+        displayStream?.getVideoTracks()[0] || camStream?.getVideoTracks()[0];
+      primaryVideo?.addEventListener("ended", () => {
         if (recorder.state !== "inactive") recorder.stop();
         setRecording(false);
         if (timerRef.current) window.clearInterval(timerRef.current);
@@ -130,6 +219,7 @@ export const ScreenRecorder = () => {
     } catch (err) {
       console.error(err);
       toast.error("Failed to start recording");
+      stopAll();
     }
   };
 
@@ -149,11 +239,12 @@ export const ScreenRecorder = () => {
     a.click();
   };
 
+  const screenDisabled = cameraMode === "only";
+
   return (
     <div className="w-full max-w-3xl space-y-6">
       <Card className="p-8 shadow-[var(--shadow-card)] border-border/50 backdrop-blur">
         <div className="flex flex-col items-center gap-8">
-          {/* Status orb */}
           <div className="relative">
             <div
               className={`size-32 rounded-full flex items-center justify-center transition-all duration-500 ${
@@ -173,7 +264,6 @@ export const ScreenRecorder = () => {
             )}
           </div>
 
-          {/* Timer */}
           <div className="text-center">
             <div className="font-mono text-5xl tracking-wider tabular-nums">
               {formatTime(elapsed)}
@@ -183,7 +273,6 @@ export const ScreenRecorder = () => {
             </p>
           </div>
 
-          {/* Action button */}
           {!recording ? (
             <Button
               size="lg"
@@ -205,7 +294,6 @@ export const ScreenRecorder = () => {
         </div>
       </Card>
 
-      {/* Settings */}
       <Card className="p-6 border-border/50">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
           Recording Settings
@@ -215,7 +303,7 @@ export const ScreenRecorder = () => {
             <Label className="flex items-center gap-2 text-sm">
               <Monitor className="size-4" /> Resolution
             </Label>
-            <Select value={resolution} onValueChange={(v) => setResolution(v as Resolution)} disabled={recording}>
+            <Select value={resolution} onValueChange={(v) => setResolution(v as Resolution)} disabled={recording || screenDisabled}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {Object.entries(RES_MAP).map(([k, v]) => (
@@ -238,6 +326,20 @@ export const ScreenRecorder = () => {
             </Select>
           </div>
 
+          <div className="space-y-2 sm:col-span-2">
+            <Label className="flex items-center gap-2 text-sm">
+              <Camera className="size-4" /> Camera
+            </Label>
+            <Select value={cameraMode} onValueChange={(v) => setCameraMode(v as CameraMode)} disabled={recording}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">Off — screen only</SelectItem>
+                <SelectItem value="overlay">Overlay — camera bubble on screen</SelectItem>
+                <SelectItem value="only">Camera only — no screen capture</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="flex items-center justify-between p-3 rounded-md bg-secondary/50 sm:col-span-2">
             <Label htmlFor="mic" className="flex items-center gap-2 text-sm cursor-pointer">
               <Mic className="size-4" /> Include microphone audio
@@ -247,7 +349,6 @@ export const ScreenRecorder = () => {
         </div>
       </Card>
 
-      {/* Preview */}
       {previewUrl && (
         <Card className="p-6 border-border/50 space-y-4">
           <div className="flex items-center justify-between">
