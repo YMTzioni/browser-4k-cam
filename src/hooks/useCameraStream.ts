@@ -215,45 +215,41 @@ export const useCameraStream = ({
         });
         segmenter.setOptions({ modelSelection: 1 });
 
-        // Auto-center state — smoothed person bbox center (in 0..1 of source).
-        // We compute the centroid of the segmentation mask each frame and
-        // ease the crop window toward it so the person stays centered.
-        const center = { x: 0.5, y: 0.5, scale: 1 };
-        const maskAnalyzer = document.createElement("canvas");
-        maskAnalyzer.width = 64;
-        maskAnalyzer.height = 36;
-        const mctx = maskAnalyzer.getContext("2d", { willReadFrequently: true })!;
+        // Face detector — drives auto-centering.
+        const FaceDetectionCtor = await loadFaceDetection();
+        if (cancelled) return;
+        const faceDetector = new FaceDetectionCtor({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
+        });
+        faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
+        faceDetectorRef.current = faceDetector;
 
-        const computePersonBox = (mask: CanvasImageSource) => {
-          const mw = maskAnalyzer.width;
-          const mh = maskAnalyzer.height;
-          mctx.clearRect(0, 0, mw, mh);
-          mctx.drawImage(mask, 0, 0, mw, mh);
-          const { data } = mctx.getImageData(0, 0, mw, mh);
-          let count = 0;
-          let minX = mw, maxX = 0, minY = mh, maxY = 0;
-          for (let y = 0; y < mh; y++) {
-            for (let x = 0; x < mw; x++) {
-              const i = (y * mw + x) * 4;
-              const v = data[i] || data[i + 3];
-              if (v > 128) {
-                count++;
-                if (x < minX) minX = x; if (x > maxX) maxX = x;
-                if (y < minY) minY = y; if (y > maxY) maxY = y;
-              }
-            }
+        // Auto-center state — smoothed face center & zoom (0..1 of source).
+        const center = { x: 0.5, y: 0.5, scale: 1 };
+        // Latest detected face box (normalized). Updated by FaceDetection.
+        const faceBoxRef: { current: { cx: number; cy: number; bw: number; bh: number } | null } = { current: null };
+
+        faceDetector.onResults((results: FaceResults) => {
+          const det = results.detections?.[0];
+          if (!det) {
+            faceBoxRef.current = null;
+            return;
           }
-          if (count < 50) return null;
-          // Use bounding box center horizontally; bias vertically toward the
-          // TOP of the box (head/face area) so the camera centers on the face,
-          // not the torso/centroid of the whole silhouette.
-          const bw = (maxX - minX) / mw;
-          const bh = (maxY - minY) / mh;
-          const cx = (minX + maxX) / 2 / mw;
-          // Face is roughly the top ~22% of the person box.
-          const cy = (minY / mh) + bh * 0.22;
-          return { cx, cy, bw, bh };
-        };
+          // boundingBox is normalized (xCenter, yCenter, width, height).
+          const bb = det.boundingBox as unknown as {
+            xCenter: number;
+            yCenter: number;
+            width: number;
+            height: number;
+          };
+          faceBoxRef.current = {
+            cx: bb.xCenter,
+            cy: bb.yCenter,
+            bw: bb.width,
+            bh: bb.height,
+          };
+        });
 
         segmenter.onResults((results: Results) => {
           const w = canvas.width;
