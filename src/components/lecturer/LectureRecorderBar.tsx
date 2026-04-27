@@ -21,6 +21,7 @@ import {
   RectangleHorizontal,
   Circle as CircleIcon,
   Focus,
+  Volume2,
 } from "lucide-react";
 import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
 
