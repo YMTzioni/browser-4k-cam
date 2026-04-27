@@ -270,6 +270,11 @@ const Lecturer = () => {
         active={annotateActive}
         onClose={() => setAnnotateActive(false)}
       />
+
+      <LectureRecorderBar
+        showCamera={showCamera}
+        onToggleCamera={() => setShowCamera((s) => !s)}
+      />
     </main>
   );
 };
