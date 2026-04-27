@@ -84,6 +84,13 @@ export const LectureRecorderBar = ({
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [converting, setConverting] = useState(false);
 
+  // Camera appearance options
+  const [bgMode, setBgMode] = useState<BackgroundMode>("none");
+  const [blurAmount, setBlurAmount] = useState(12);
+  const [shape, setShape] = useState<CameraShape>("rounded");
+  const [bubbleWidth, setBubbleWidth] = useState(240);
+  const [mirror, setMirror] = useState(true);
+
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -93,9 +100,14 @@ export const LectureRecorderBar = ({
   const drawIntervalRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
+  const shapeRef = useRef<CameraShape>(shape);
+  const mirrorRef = useRef<boolean>(mirror);
+  useEffect(() => { shapeRef.current = shape; }, [shape]);
+  useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
 
   const { rawStream, processedStream, error: camError, requestCamera, stopCamera } = useCameraStream({
-    backgroundMode: "none",
+    backgroundMode: bgMode,
+    blurAmount,
   });
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
