@@ -85,6 +85,10 @@ export const LectureRecorderBar = ({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [converting, setConverting] = useState(false);
+  const [convertProgress, setConvertProgress] = useState(0); // 0..1
+  const [convertElapsed, setConvertElapsed] = useState(0); // seconds
+  const [convertStage, setConvertStage] = useState<string>("");
+  const convertTimerRef = useRef<number | null>(null);
 
   // Camera appearance options
   const [bgMode, setBgMode] = useState<BackgroundMode>("none");
@@ -146,19 +150,23 @@ export const LectureRecorderBar = ({
     micStreamRef.current = null;
   };
 
-  // Prefer MP4/H.264 directly from MediaRecorder when the browser supports it
-  // (Safari + recent Chrome). This avoids the costly WebM→MP4 transcode entirely.
+  // Prefer WebM (Opus audio) — Chrome's MP4 MediaRecorder can drop the audio
+  // track in some configurations. WebM reliably embeds audio+video; we
+  // transcode to high-quality 4K MP4 on download via FFmpeg.
   const pickMimeType = () => {
     const candidates = [
-      "video/mp4;codecs=h264,aac",
-      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-      "video/mp4",
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=h264,opus",
       "video/webm",
+      "video/mp4;codecs=h264,aac",
+      "video/mp4",
     ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
+
+  // Target output resolution: up to 4K (3840 wide), preserving stage aspect.
+  const TARGET_OUTPUT_WIDTH = 3840;
 
   const start = async () => {
     const stage = stageRef.current;
@@ -168,27 +176,25 @@ export const LectureRecorderBar = ({
       return;
     }
     try {
-      // Composer canvas sized to the stage (in device pixels for sharpness).
-      const dpr = window.devicePixelRatio || 1;
+      // Composer canvas sized for 4K output (preserves stage aspect ratio).
       const stageRect = stage.getBoundingClientRect();
+      const stageAspect = stageRect.width / stageRect.height;
+      const outW = TARGET_OUTPUT_WIDTH;
+      const outH = Math.round(outW / stageAspect / 2) * 2; // even number for H.264
       const composer = document.createElement("canvas");
-      composer.width = Math.round(stageRect.width * dpr);
-      composer.height = Math.round(stageRect.height * dpr);
+      composer.width = outW;
+      composer.height = outH;
       composerCanvasRef.current = composer;
-      const cctx = composer.getContext("2d")!;
+      const cctx = composer.getContext("2d", { alpha: false })!;
+      cctx.imageSmoothingEnabled = true;
+      cctx.imageSmoothingQuality = "high";
 
       const drawFrame = () => {
         const stageEl = stageRef.current;
         if (!stageEl) return;
         const sRect = stageEl.getBoundingClientRect();
-        // Resize composer if stage changed
-        if (
-          composer.width !== Math.round(sRect.width * dpr) ||
-          composer.height !== Math.round(sRect.height * dpr)
-        ) {
-          composer.width = Math.round(sRect.width * dpr);
-          composer.height = Math.round(sRect.height * dpr);
-        }
+        // Scale factor from CSS px (stage) → composer (4K) px.
+        const dpr = composer.width / sRect.width;
 
         // Background
         cctx.fillStyle = "#000";
@@ -325,8 +331,8 @@ export const LectureRecorderBar = ({
       const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 6_000_000,
-        audioBitsPerSecond: 128_000,
+        videoBitsPerSecond: 25_000_000, // ~25 Mbps for 4K
+        audioBitsPerSecond: 192_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
@@ -387,18 +393,25 @@ export const LectureRecorderBar = ({
     if (previewUrl) triggerDownload(previewUrl, "webm");
   };
 
+  const formatEta = (s: number) => {
+    if (!isFinite(s) || s <= 0) return "—";
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s % 60);
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+
   const downloadMp4 = async () => {
     if (!previewBlob) return;
-    // Fast path: the recorder already produced MP4 — just download it.
-    if (previewBlob.type === "video/mp4" || previewBlob.type.startsWith("video/mp4")) {
-      const url = URL.createObjectURL(previewBlob);
-      triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      toast.success("MP4 ready");
-      return;
-    }
     setConverting(true);
-    const t = toast.loading("Converting to MP4…");
+    setConvertProgress(0);
+    setConvertElapsed(0);
+    setConvertStage("Loading encoder…");
+    const startedAt = Date.now();
+    if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
+    convertTimerRef.current = window.setInterval(() => {
+      setConvertElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
     try {
       const { FFmpeg } = await import("@ffmpeg/ffmpeg");
       const { fetchFile } = await import("@ffmpeg/util");
@@ -408,36 +421,62 @@ export const LectureRecorderBar = ({
         coreURL: `${base}/ffmpeg-core.js`,
         wasmURL: `${base}/ffmpeg-core.wasm`,
       });
-      await ffmpeg.writeFile("in.webm", await fetchFile(previewBlob));
-      // Use ultrafast preset + higher CRF for ~3-5x faster encoding in the
-      // browser. Quality is still very good for slide+webcam content.
+
+      // Real progress from FFmpeg (0..1).
+      ffmpeg.on("progress", ({ progress }) => {
+        if (typeof progress === "number" && progress >= 0) {
+          setConvertProgress(Math.min(1, progress));
+          setConvertStage("Encoding 4K MP4…");
+        }
+      });
+
+      const inputName = previewBlob.type.includes("mp4") ? "in.mp4" : "in.webm";
+      setConvertStage("Reading source…");
+      await ffmpeg.writeFile(inputName, await fetchFile(previewBlob));
+
+      setConvertStage("Encoding 4K MP4…");
+      // High quality 4K H.264 + AAC. veryfast = good balance of speed/quality
+      // in WASM. We always re-mux to guarantee audio is present in the MP4.
       await ffmpeg.exec([
-        "-i", "in.webm",
+        "-i", inputName,
         "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-crf", "26",
+        "-preset", "veryfast",
+        "-crf", "20",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "192k",
+        "-ac", "2",
         "-movflags", "+faststart",
         "out.mp4",
       ]);
+
+      setConvertStage("Finalizing…");
       const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
       const buf = new Uint8Array(data).buffer;
       const mp4Blob = new Blob([buf], { type: "video/mp4" });
       const url = URL.createObjectURL(mp4Blob);
       triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      toast.success("MP4 ready", { id: t });
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setConvertProgress(1);
+      setConvertStage("Done");
+      toast.success(`4K MP4 ready (${formatEta(Math.floor((Date.now() - startedAt) / 1000))})`);
     } catch (err) {
       console.error(err);
-      toast.error("MP4 conversion failed — downloading WebM instead", { id: t });
+      toast.error("MP4 conversion failed — downloading WebM instead");
       downloadWebm();
     } finally {
+      if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
+      convertTimerRef.current = null;
       setConverting(false);
     }
   };
+
+  // Estimate remaining time from progress + elapsed.
+  const convertEta =
+    convertProgress > 0.02 && convertProgress < 1
+      ? Math.max(0, convertElapsed / convertProgress - convertElapsed)
+      : 0;
+
 
   return (
     <>
@@ -641,9 +680,10 @@ export const LectureRecorderBar = ({
                 onClick={downloadMp4}
                 disabled={converting}
                 className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
+                title="Export as 4K MP4 (re-encoded for compatibility & audio)"
               >
                 <Download className="size-4" />
-                {converting ? "Converting…" : "MP4"}
+                {converting ? `${Math.round(convertProgress * 100)}%` : "4K MP4"}
               </Button>
               <Button
                 size="sm"
@@ -651,12 +691,35 @@ export const LectureRecorderBar = ({
                 onClick={downloadWebm}
                 disabled={converting}
                 className="gap-2"
+                title="Download original WebM (no re-encode, fastest)"
               >
                 <Download className="size-4" /> WebM
               </Button>
             </>
           )}
         </div>
+
+        {/* Conversion progress panel */}
+        {converting && (
+          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-card/95 backdrop-blur border border-border shadow-xl p-3 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold">{convertStage || "Working…"}</span>
+              <span className="font-mono tabular-nums text-muted-foreground">
+                {Math.round(convertProgress * 100)}%
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-[image:var(--gradient-primary)] transition-[width] duration-300"
+                style={{ width: `${Math.max(2, convertProgress * 100)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono tabular-nums">
+              <span>Elapsed: {formatTime(convertElapsed)}</span>
+              <span>ETA: {formatEta(convertEta)}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {showCamera && (
