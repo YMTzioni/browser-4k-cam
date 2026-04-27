@@ -507,6 +507,7 @@ export const LectureRecorderBar = ({
           >
             {withMic ? <Mic className="size-4" /> : <MicOff className="size-4" />}
           </Button>
+          <MicTestButton disabled={recording} />
           <Button
             size="icon"
             variant={showCamera ? "default" : "secondary"}
