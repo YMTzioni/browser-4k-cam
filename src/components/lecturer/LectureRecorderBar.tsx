@@ -145,8 +145,17 @@ export const LectureRecorderBar = ({
     micStreamRef.current = null;
   };
 
+  // Prefer MP4/H.264 directly from MediaRecorder when the browser supports it
+  // (Safari + recent Chrome). This avoids the costly WebM→MP4 transcode entirely.
   const pickMimeType = () => {
-    const candidates = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+    const candidates = [
+      "video/mp4;codecs=h264,aac",
+      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+      "video/mp4",
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
 
@@ -312,15 +321,17 @@ export const LectureRecorderBar = ({
       ];
       const stream = new MediaStream(tracks);
 
+      const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, {
-        mimeType: pickMimeType(),
+        mimeType,
         videoBitsPerSecond: 6_000_000,
         audioBitsPerSecond: 128_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        const containerType = mimeType.startsWith("video/mp4") ? "video/mp4" : "video/webm";
+        const blob = new Blob(chunksRef.current, { type: containerType });
         setPreviewBlob(blob);
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
@@ -377,6 +388,14 @@ export const LectureRecorderBar = ({
 
   const downloadMp4 = async () => {
     if (!previewBlob) return;
+    // Fast path: the recorder already produced MP4 — just download it.
+    if (previewBlob.type === "video/mp4" || previewBlob.type.startsWith("video/mp4")) {
+      const url = URL.createObjectURL(previewBlob);
+      triggerDownload(url, "mp4");
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      toast.success("MP4 ready");
+      return;
+    }
     setConverting(true);
     const t = toast.loading("Converting to MP4…");
     try {
@@ -389,12 +408,14 @@ export const LectureRecorderBar = ({
         wasmURL: `${base}/ffmpeg-core.wasm`,
       });
       await ffmpeg.writeFile("in.webm", await fetchFile(previewBlob));
-      // Re-encode video to H.264, copy audio if AAC-compatible (re-encode to AAC).
+      // Use ultrafast preset + higher CRF for ~3-5x faster encoding in the
+      // browser. Quality is still very good for slide+webcam content.
       await ffmpeg.exec([
         "-i", "in.webm",
         "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-crf", "26",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "128k",
