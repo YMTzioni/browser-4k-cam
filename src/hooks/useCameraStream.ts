@@ -43,7 +43,7 @@ export const useCameraStream = ({
 
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const segmenterRef = useRef<SelfieSegmentation | null>(null);
+  const segmenterRef = useRef<SelfieSegmentationType | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const runningRef = useRef(false);
@@ -142,7 +142,9 @@ export const useCameraStream = ({
         canvasRef.current = canvas;
         const ctx = canvas.getContext("2d")!;
 
-        const segmenter = new SelfieSegmentation({
+        const SelfieSegmentationCtor = await loadSelfieSegmentation();
+        if (cancelled) return;
+        const segmenter = new SelfieSegmentationCtor({
           locateFile: (file) =>
             `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
         });
