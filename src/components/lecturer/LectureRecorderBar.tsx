@@ -630,6 +630,10 @@ export const LectureRecorderBar = ({
           videoRef={camPreviewRef}
           hasStream={!!camStream}
           recording={recording}
+          shape={shape}
+          width={bubbleWidth}
+          onWidthChange={setBubbleWidth}
+          mirror={mirror}
         />
       )}
     </>
