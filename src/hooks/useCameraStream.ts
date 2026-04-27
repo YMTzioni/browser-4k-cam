@@ -205,9 +205,20 @@ export const useCameraStream = ({
         // captureStream from canvas — will be used for preview & recording
         const out = canvas.captureStream(30);
         setProcessedStream(out);
-      } catch (e) {
+      } catch (e: unknown) {
         console.error(e);
-        setError("Camera access denied");
+        const err = e as { name?: string; message?: string };
+        if (err?.name === "NotAllowedError" || err?.name === "SecurityError") {
+          setError(
+            "Camera permission denied. Allow camera access for this site in your browser settings, then toggle the camera off and on."
+          );
+        } else if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
+          setError("No camera found on this device.");
+        } else if (err?.name === "NotReadableError") {
+          setError("Camera is in use by another app. Close it and try again.");
+        } else {
+          setError(err?.message || "Could not access camera.");
+        }
       }
     })();
 
