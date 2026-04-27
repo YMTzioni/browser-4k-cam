@@ -312,12 +312,56 @@ export const LectureRecorderBar = ({
     toast.success("Recording saved");
   };
 
-  const download = () => {
-    if (!previewUrl) return;
+  const triggerDownload = (url: string, ext: string) => {
     const a = document.createElement("a");
-    a.href = previewUrl;
-    a.download = `lecture-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
+    a.href = url;
+    a.download = `lecture-${new Date().toISOString().replace(/[:.]/g, "-")}.${ext}`;
     a.click();
+  };
+
+  const downloadWebm = () => {
+    if (previewUrl) triggerDownload(previewUrl, "webm");
+  };
+
+  const downloadMp4 = async () => {
+    if (!previewBlob) return;
+    setConverting(true);
+    const t = toast.loading("Converting to MP4…");
+    try {
+      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+      const { fetchFile } = await import("@ffmpeg/util");
+      const ffmpeg = new FFmpeg();
+      const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
+      await ffmpeg.load({
+        coreURL: `${base}/ffmpeg-core.js`,
+        wasmURL: `${base}/ffmpeg-core.wasm`,
+      });
+      await ffmpeg.writeFile("in.webm", await fetchFile(previewBlob));
+      // Re-encode video to H.264, copy audio if AAC-compatible (re-encode to AAC).
+      await ffmpeg.exec([
+        "-i", "in.webm",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        "out.mp4",
+      ]);
+      const data = await ffmpeg.readFile("out.mp4");
+      const mp4Blob = new Blob([data as Uint8Array], { type: "video/mp4" });
+      const url = URL.createObjectURL(mp4Blob);
+      triggerDownload(url, "mp4");
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      toast.success("MP4 ready", { id: t });
+    } catch (err) {
+      console.error(err);
+      toast.error("MP4 conversion failed — downloading WebM instead", { id: t });
+      downloadWebm();
+    } finally {
+      setConverting(false);
+    }
   };
 
   return (
