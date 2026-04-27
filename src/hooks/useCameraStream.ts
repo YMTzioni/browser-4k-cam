@@ -20,7 +20,6 @@ const loadSelfieSegmentation = async (): Promise<new (cfg: { locateFile: (f: str
 export type BackgroundMode = "none" | "blur" | "image";
 
 interface Options {
-  enabled: boolean;
   backgroundMode: BackgroundMode;
   backgroundImageUrl?: string | null;
   blurAmount?: number; // px
@@ -32,7 +31,6 @@ interface Options {
  * processed stream (canvas-based) suitable for previewing and recording.
  */
 export const useCameraStream = ({
-  enabled,
   backgroundMode,
   backgroundImageUrl,
   blurAmount = 12,
@@ -45,6 +43,8 @@ export const useCameraStream = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const segmenterRef = useRef<SelfieSegmentationType | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
+  const rawStreamRef = useRef<MediaStream | null>(null);
+  const processedStreamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const runningRef = useRef(false);
   const modeRef = useRef<BackgroundMode>(backgroundMode);
@@ -56,6 +56,46 @@ export const useCameraStream = ({
   useEffect(() => {
     blurRef.current = blurAmount;
   }, [blurAmount]);
+
+  const getCameraErrorMessage = useCallback(async (e: unknown) => {
+    const err = e as { name?: string; message?: string };
+
+    if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
+      return "No camera was detected on this device.";
+    }
+
+    if (err?.name === "NotReadableError") {
+      return "Camera was found, but another app is using it. Close that app and try again.";
+    }
+
+    if (err?.name === "NotAllowedError" || err?.name === "SecurityError") {
+      try {
+        const status = await (navigator.permissions as Permissions | undefined)?.query({
+          name: "camera" as PermissionName,
+        });
+        if (status?.state === "denied") {
+          return "Camera permission is blocked. Allow camera access in your browser and try again.";
+        }
+      } catch {
+        /* permissions API unavailable */
+      }
+
+      return "Camera access was denied. Click allow when your browser asks for permission.";
+    }
+
+    try {
+      const devices = await navigator.mediaDevices?.enumerateDevices?.();
+      const hasVideoInput = devices?.some((device) => device.kind === "videoinput");
+
+      if (!hasVideoInput) {
+        return "No camera was detected on this device.";
+      }
+    } catch {
+      /* enumerateDevices unavailable */
+    }
+
+    return err?.message || "Camera could not be started.";
+  }, []);
 
   // Load background image
   useEffect(() => {
@@ -79,58 +119,58 @@ export const useCameraStream = ({
       segmenterRef.current.close().catch(() => {});
       segmenterRef.current = null;
     }
-    if (rawStream) {
-      rawStream.getTracks().forEach((t) => t.stop());
-    }
-    if (processedStream) {
-      processedStream.getTracks().forEach((t) => t.stop());
-    }
+    rawStreamRef.current?.getTracks().forEach((t) => t.stop());
+    processedStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawStreamRef.current = null;
+    processedStreamRef.current = null;
     setRawStream(null);
     setProcessedStream(null);
-  }, [rawStream, processedStream]);
+  }, []);
 
-  // Start / stop based on enabled
+  const requestCamera = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera API unavailable. Use a modern browser over HTTPS.");
+      return null;
+    }
+
+    if (rawStreamRef.current) {
+      setError(null);
+      return rawStreamRef.current;
+    }
+
+    try {
+      setError(null);
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        },
+      });
+
+      rawStreamRef.current = stream;
+      setRawStream(stream);
+      return stream;
+    } catch (e: unknown) {
+      console.error(e);
+      setError(await getCameraErrorMessage(e));
+      return null;
+    }
+  }, [getCameraErrorMessage]);
+
   useEffect(() => {
-    if (!enabled) {
-      stopAll();
+    if (!rawStream) {
       return;
     }
+
     let cancelled = false;
 
     (async () => {
       try {
-        // Proactively check permission state when supported
-        try {
-          const status = await (navigator.permissions as Permissions | undefined)?.query({
-            name: "camera" as PermissionName,
-          });
-          if (status?.state === "denied") {
-            setError(
-              "Camera blocked. Click the camera icon in your browser's address bar and allow access, then try again."
-            );
-            return;
-          }
-        } catch {
-          /* permissions API unavailable — continue */
-        }
-
-        if (!navigator.mediaDevices?.getUserMedia) {
-          setError("Camera API unavailable. Use a modern browser over HTTPS.");
-          return;
-        }
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        setRawStream(stream);
-
         // Set up offscreen video + canvas
         const video = document.createElement("video");
-        video.srcObject = stream;
+        video.srcObject = rawStream;
         video.muted = true;
         video.playsInline = true;
         await video.play();
@@ -222,31 +262,26 @@ export const useCameraStream = ({
 
         // captureStream from canvas — will be used for preview & recording
         const out = canvas.captureStream(30);
+        processedStreamRef.current = out;
         setProcessedStream(out);
       } catch (e: unknown) {
         console.error(e);
-        const err = e as { name?: string; message?: string };
-        if (err?.name === "NotAllowedError" || err?.name === "SecurityError") {
-          setError(
-            "Camera permission denied. Allow camera access for this site in your browser settings, then toggle the camera off and on."
-          );
-        } else if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
-          setError("No camera found on this device.");
-        } else if (err?.name === "NotReadableError") {
-          setError("Camera is in use by another app. Close it and try again.");
-        } else {
-          setError(err?.message || "Could not access camera.");
-        }
+        setError(await getCameraErrorMessage(e));
       }
     })();
 
     return () => {
       cancelled = true;
+      runningRef.current = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      processedStreamRef.current?.getTracks().forEach((track) => track.stop());
+      processedStreamRef.current = null;
+      setProcessedStream(null);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [getCameraErrorMessage, rawStream]);
 
   useEffect(() => () => stopAll(), [stopAll]);
 
-  return { rawStream, processedStream, canvasRef, error };
+  return { rawStream, processedStream, canvasRef, error, requestCamera, stopCamera: stopAll };
 };
