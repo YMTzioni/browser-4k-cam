@@ -1,16 +1,28 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { ScreenRecorder } from "@/components/ScreenRecorder";
 
-// IMPORTANT: Fully REPLACE this with your own code
-const PlaceholderIndex = () => {
-  // PLACEHOLDER: Replace this entire return statement with the user's app.
-  // The inline background color is intentionally not part of the design system.
+const Index = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center" style={{ backgroundColor: '#fcfbf8' }}>
-      <img data-lovable-blank-page-placeholder="REMOVE_THIS" src="/placeholder.svg" alt="Your app will live here!" />
-    </div>
+    <main className="min-h-screen bg-[image:var(--gradient-bg)] flex flex-col items-center px-4 py-12 sm:py-20">
+      <header className="text-center mb-12 max-w-2xl">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-secondary/60 border border-border/50 text-xs font-medium text-muted-foreground mb-6">
+          <span className="size-2 rounded-full bg-primary animate-pulse" />
+          Browser-based · No install required
+        </div>
+        <h1 className="text-5xl sm:text-6xl font-bold tracking-tight mb-4 bg-gradient-to-b from-foreground to-foreground/60 bg-clip-text text-transparent">
+          4K Screen Recorder
+        </h1>
+        <p className="text-lg text-muted-foreground">
+          Capture your screen in stunning ultra-high definition with crystal-clear audio — right from your browser.
+        </p>
+      </header>
+
+      <ScreenRecorder />
+
+      <footer className="mt-16 text-center text-xs text-muted-foreground max-w-md">
+        Best on Chrome, Edge, Firefox or Opera. Recordings are processed locally — nothing leaves your device.
+      </footer>
+    </main>
   );
 };
-
-const Index = PlaceholderIndex;
 
 export default Index;
