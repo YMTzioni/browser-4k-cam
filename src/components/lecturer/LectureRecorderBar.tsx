@@ -493,6 +493,15 @@ export const LectureRecorderBar = ({
           >
             {showCamera ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
           </Button>
+          <Button
+            size="icon"
+            variant={autoCenter ? "default" : "secondary"}
+            onClick={() => setAutoCenter((v) => !v)}
+            disabled={!showCamera}
+            title={autoCenter ? "Auto-center: ON" : "Auto-center: OFF"}
+          >
+            <Focus className="size-4" />
+          </Button>
 
           <Popover>
             <PopoverTrigger asChild>
