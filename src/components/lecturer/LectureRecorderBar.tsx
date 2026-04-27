@@ -111,9 +111,12 @@ export const LectureRecorderBar = ({
 
   const cleanup = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (drawIntervalRef.current) window.clearInterval(drawIntervalRef.current);
+    drawIntervalRef.current = null;
     composerStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
     composerStreamRef.current = null;
     micStreamRef.current = null;
   };
