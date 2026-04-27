@@ -16,6 +16,7 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@hookform/resolvers": "^3.10.0",
+    "@mediapipe/face_detection": "^0.4.1646425229",
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
