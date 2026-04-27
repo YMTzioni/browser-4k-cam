@@ -72,13 +72,16 @@ export const LectureRecorderBar = ({
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [converting, setConverting] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerStreamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const drawIntervalRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
 
