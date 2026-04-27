@@ -92,29 +92,7 @@ const Lecturer = () => {
     };
   }, [pdf, page]);
 
-  // Build small thumbnails (lazy, after main render)
-  useEffect(() => {
-    if (!pdf) return;
-    let cancelled = false;
-    (async () => {
-      const out: string[] = [];
-      for (let i = 1; i <= pdf.numPages; i++) {
-        if (cancelled) return;
-        const p = await pdf.doc.getPage(i);
-        const v = p.getViewport({ scale: 0.2 });
-        const c = document.createElement("canvas");
-        c.width = v.width;
-        c.height = v.height;
-        await p.render({ canvasContext: c.getContext("2d")!, viewport: v, canvas: c }).promise;
-        out.push(c.toDataURL("image/jpeg", 0.6));
-        if (i % 4 === 0) setThumbs([...out]);
-      }
-      if (!cancelled) setThumbs(out);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pdf]);
+  // (Thumbnails removed — slide navigation lives in the recorder toolbar.)
 
   // Re-render on resize
   useEffect(() => {
