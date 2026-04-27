@@ -19,7 +19,9 @@ const Index = () => {
         </p>
         <div className="mt-6">
           <Button asChild variant="secondary" className="gap-2">
-            <Link to="/lecturer"><Presentation className="size-4" /> Open Lecturer Workspace</Link>
+            <a href="/lecturer" target="_blank" rel="noopener noreferrer">
+              <Presentation className="size-4" /> Open Lecturer Workspace
+            </a>
           </Button>
         </div>
       </header>
