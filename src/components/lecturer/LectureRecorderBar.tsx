@@ -11,6 +11,8 @@ import {
   Camera,
   CameraOff,
   Download,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useCameraStream } from "@/hooks/useCameraStream";
 
@@ -20,19 +22,51 @@ const formatTime = (s: number) => {
   return `${m}:${sec}`;
 };
 
+type CameraBubblePosition = {
+  x: number;
+  y: number;
+  width: number;
+  /** Bubble bounding box in viewport CSS pixels (for compositing). */
+  rect: DOMRect | null;
+};
+
 type Props = {
-  /** Show camera bubble on screen for the shared tab */
   showCamera: boolean;
   onToggleCamera: () => void;
+  /** PDF canvas to record. */
+  pdfCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
+  /** Stage element (used as the source coordinate space). */
+  stageRef: React.MutableRefObject<HTMLDivElement | null>;
+  /** Returns the current annotation canvas (may be null when overlay is hidden). */
+  getAnnotationCanvas: () => HTMLCanvasElement | null;
+  /** Slide navigation. */
+  page: number;
+  totalPages: number;
+  onPrevPage: () => void;
+  onNextPage: () => void;
 };
 
 /**
- * Floating recorder toolbar + draggable camera bubble for the Lecturer workspace.
- * The bubble is a real DOM element on this tab — when the lecturer shares this
- * tab via "Share tab" in the screen-share picker, the bubble is captured in
- * the recording, and they can drag it around live.
+ * Floating recorder toolbar for the Lecturer workspace.
+ *
+ * Recording strategy: we composite the PDF canvas + annotation canvas + camera
+ * bubble into an offscreen canvas at 30fps and capture *that* stream. This
+ * means:
+ *   • No screen-share picker / tab-share prompt.
+ *   • The toolbar itself is NOT included in the recording.
+ *   • Slide navigation buttons & camera bubble are part of the workspace.
  */
-export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
+export const LectureRecorderBar = ({
+  showCamera,
+  onToggleCamera,
+  pdfCanvasRef,
+  stageRef,
+  getAnnotationCanvas,
+  page,
+  totalPages,
+  onPrevPage,
+  onNextPage,
+}: Props) => {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [withMic, setWithMic] = useState(true);
@@ -41,9 +75,12 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const displayStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const composerStreamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
+  const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
 
   const { rawStream, processedStream, error: camError, requestCamera, stopCamera } = useCameraStream({
     backgroundMode: "none",
@@ -51,7 +88,6 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
 
-  // Camera lifecycle tied to showCamera
   useEffect(() => {
     if (showCamera) requestCamera();
     else stopCamera();
@@ -72,9 +108,10 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
 
   const cleanup = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
-    displayStreamRef.current?.getTracks().forEach((t) => t.stop());
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    composerStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
-    displayStreamRef.current = null;
+    composerStreamRef.current = null;
     micStreamRef.current = null;
   };
 
@@ -84,12 +121,102 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
   };
 
   const start = async () => {
+    const stage = stageRef.current;
+    const pdf = pdfCanvasRef.current;
+    if (!stage || !pdf) {
+      toast.error("PDF stage not ready");
+      return;
+    }
     try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
-        audio: { echoCancellation: false, noiseSuppression: false, sampleRate: 48000 },
-      });
-      displayStreamRef.current = display;
+      // Composer canvas sized to the stage (in device pixels for sharpness).
+      const dpr = window.devicePixelRatio || 1;
+      const stageRect = stage.getBoundingClientRect();
+      const composer = document.createElement("canvas");
+      composer.width = Math.round(stageRect.width * dpr);
+      composer.height = Math.round(stageRect.height * dpr);
+      composerCanvasRef.current = composer;
+      const cctx = composer.getContext("2d")!;
+
+      const drawFrame = () => {
+        const stageEl = stageRef.current;
+        if (!stageEl) return;
+        const sRect = stageEl.getBoundingClientRect();
+        // Resize composer if stage changed
+        if (
+          composer.width !== Math.round(sRect.width * dpr) ||
+          composer.height !== Math.round(sRect.height * dpr)
+        ) {
+          composer.width = Math.round(sRect.width * dpr);
+          composer.height = Math.round(sRect.height * dpr);
+        }
+
+        // Background
+        cctx.fillStyle = "#000";
+        cctx.fillRect(0, 0, composer.width, composer.height);
+
+        // PDF canvas (centered as it appears on screen)
+        const pdfEl = pdfCanvasRef.current;
+        if (pdfEl) {
+          const pRect = pdfEl.getBoundingClientRect();
+          const dx = (pRect.left - sRect.left) * dpr;
+          const dy = (pRect.top - sRect.top) * dpr;
+          const dw = pRect.width * dpr;
+          const dh = pRect.height * dpr;
+          try {
+            cctx.drawImage(pdfEl, dx, dy, dw, dh);
+          } catch {
+            /* ignore mid-render */
+          }
+        }
+
+        // Annotation canvas (covers full viewport — clip to stage area)
+        const annEl = getAnnotationCanvas();
+        if (annEl) {
+          const aRect = annEl.getBoundingClientRect();
+          const dx = (aRect.left - sRect.left) * dpr;
+          const dy = (aRect.top - sRect.top) * dpr;
+          const dw = aRect.width * dpr;
+          const dh = aRect.height * dpr;
+          try {
+            cctx.drawImage(annEl, dx, dy, dw, dh);
+          } catch {
+            /* ignore */
+          }
+        }
+
+        // Camera bubble
+        const bubble = cameraBubbleRef.current;
+        const video = camPreviewRef.current;
+        if (bubble && video && video.readyState >= 2) {
+          const bRect = bubble.getBoundingClientRect();
+          // Only draw the part of the bubble that overlaps the stage
+          const dx = (bRect.left - sRect.left) * dpr;
+          const dy = (bRect.top - sRect.top) * dpr;
+          const dw = bRect.width * dpr;
+          const dh = bRect.height * dpr;
+          cctx.save();
+          const radius = 12 * dpr;
+          roundRectPath(cctx, dx, dy, dw, dh, radius);
+          cctx.clip();
+          try {
+            cctx.drawImage(video, dx, dy, dw, dh);
+          } catch {
+            /* ignore */
+          }
+          cctx.restore();
+          // Ring
+          cctx.lineWidth = 2 * dpr;
+          cctx.strokeStyle = "hsl(var(--primary))";
+          roundRectPath(cctx, dx, dy, dw, dh, radius);
+          cctx.stroke();
+        }
+
+        rafRef.current = requestAnimationFrame(drawFrame);
+      };
+      drawFrame();
+
+      const composerStream = composer.captureStream(30);
+      composerStreamRef.current = composerStream;
 
       if (withMic) {
         try {
@@ -101,10 +228,7 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
         }
       }
 
-      const tracks: MediaStreamTrack[] = [
-        ...display.getVideoTracks(),
-        ...display.getAudioTracks(),
-      ];
+      const tracks: MediaStreamTrack[] = [...composerStream.getVideoTracks()];
       micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
       const stream = new MediaStream(tracks);
 
@@ -120,12 +244,6 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
       };
-      display.getVideoTracks()[0].addEventListener("ended", () => {
-        if (recorder.state !== "inactive") recorder.stop();
-        setRecording(false);
-        setPaused(false);
-        if (timerRef.current) window.clearInterval(timerRef.current);
-      });
 
       recorder.start(1000);
       recorderRef.current = recorder;
@@ -134,7 +252,7 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
       setElapsed(0);
       setPreviewUrl(null);
       timerRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-      toast.success("Recording started — share this tab in the picker");
+      toast.success("Recording started");
     } catch (err) {
       console.error(err);
       toast.error("Could not start recording");
@@ -176,6 +294,31 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
     <>
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
         <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-card/95 backdrop-blur border border-border shadow-xl">
+          {/* Slide navigation */}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onPrevPage}
+            disabled={page <= 1 || totalPages === 0}
+            title="Previous slide"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <span className="text-sm font-mono tabular-nums px-1 min-w-[60px] text-center">
+            {totalPages > 0 ? `${page} / ${totalPages}` : "—"}
+          </span>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onNextPage}
+            disabled={page >= totalPages || totalPages === 0}
+            title="Next slide"
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+
+          <div className="w-px h-6 bg-border mx-1" />
+
           {!recording ? (
             <Button onClick={start} size="sm" className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground">
               <Circle className="size-4" fill="currentColor" /> Record
@@ -237,6 +380,7 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
 
       {showCamera && (
         <DraggableCameraBubble
+          ref={cameraBubbleRef}
           videoRef={camPreviewRef}
           hasStream={!!camStream}
           recording={recording}
@@ -246,16 +390,33 @@ export const LectureRecorderBar = ({ showCamera, onToggleCamera }: Props) => {
   );
 };
 
-/** Floating, draggable, resizable camera bubble — captured when the tab is shared. */
-const DraggableCameraBubble = ({
-  videoRef,
-  hasStream,
-  recording,
-}: {
-  videoRef: React.MutableRefObject<HTMLVideoElement | null>;
-  hasStream: boolean;
-  recording: boolean;
-}) => {
+const roundRectPath = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) => {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+};
+
+import { forwardRef } from "react";
+
+const DraggableCameraBubble = forwardRef<
+  HTMLDivElement,
+  {
+    videoRef: React.MutableRefObject<HTMLVideoElement | null>;
+    hasStream: boolean;
+    recording: boolean;
+  }
+>(({ videoRef, hasStream, recording }, ref) => {
   const [pos, setPos] = useState(() => ({
     x: window.innerWidth - 280,
     y: window.innerHeight - 240,
@@ -296,6 +457,7 @@ const DraggableCameraBubble = ({
 
   return (
     <div
+      ref={ref}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -328,4 +490,5 @@ const DraggableCameraBubble = ({
       />
     </div>
   );
-};
+});
+DraggableCameraBubble.displayName = "DraggableCameraBubble";
