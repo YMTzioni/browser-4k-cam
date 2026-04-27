@@ -189,31 +189,86 @@ export const useCameraStream = ({
             `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
         });
         segmenter.setOptions({ modelSelection: 1 });
+
+        // Auto-center state — smoothed person bbox center (in 0..1 of source).
+        // We compute the centroid of the segmentation mask each frame and
+        // ease the crop window toward it so the person stays centered.
+        const center = { x: 0.5, y: 0.5, scale: 1 };
+        const maskAnalyzer = document.createElement("canvas");
+        maskAnalyzer.width = 64;
+        maskAnalyzer.height = 36;
+        const mctx = maskAnalyzer.getContext("2d", { willReadFrequently: true })!;
+
+        const computePersonBox = (mask: CanvasImageSource) => {
+          mctx.clearRect(0, 0, maskAnalyzer.width, maskAnalyzer.height);
+          mctx.drawImage(mask, 0, 0, maskAnalyzer.width, maskAnalyzer.height);
+          const { data } = mctx.getImageData(0, 0, maskAnalyzer.width, maskAnalyzer.height);
+          let sumX = 0, sumY = 0, count = 0;
+          let minX = maskAnalyzer.width, maxX = 0, minY = maskAnalyzer.height, maxY = 0;
+          for (let y = 0; y < maskAnalyzer.height; y++) {
+            for (let x = 0; x < maskAnalyzer.width; x++) {
+              const i = (y * maskAnalyzer.width + x) * 4;
+              // MediaPipe mask: high alpha or high red = person.
+              const v = data[i] || data[i + 3];
+              if (v > 128) {
+                sumX += x; sumY += y; count++;
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+              }
+            }
+          }
+          if (count < 50) return null;
+          return {
+            cx: sumX / count / maskAnalyzer.width,
+            cy: sumY / count / maskAnalyzer.height,
+            bw: (maxX - minX) / maskAnalyzer.width,
+            bh: (maxY - minY) / maskAnalyzer.height,
+          };
+        };
+
         segmenter.onResults((results: Results) => {
           const w = canvas.width;
           const h = canvas.height;
           const mode = modeRef.current;
 
+          // Compute person centroid + size and ease toward it.
+          const box = computePersonBox(results.segmentationMask);
+          if (box) {
+            // Target scale: keep person occupying ~70% of the shorter axis.
+            const personSize = Math.max(box.bw, box.bh);
+            const targetScale = Math.min(2.2, Math.max(1, 0.7 / Math.max(0.05, personSize)));
+            // Smooth (lerp)
+            center.x += (box.cx - center.x) * 0.12;
+            center.y += (box.cy - center.y) * 0.12;
+            center.scale += (targetScale - center.scale) * 0.08;
+          }
+
+          // Crop window in source coords keeping person centered.
+          const cropW = w / center.scale;
+          const cropH = h / center.scale;
+          let sx = center.x * w - cropW / 2;
+          let sy = center.y * h - cropH / 2;
+          sx = Math.max(0, Math.min(w - cropW, sx));
+          sy = Math.max(0, Math.min(h - cropH, sy));
+
           ctx.save();
           ctx.clearRect(0, 0, w, h);
 
           if (mode === "none") {
-            ctx.drawImage(results.image, 0, 0, w, h);
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
             ctx.restore();
             return;
           }
 
-          // Draw person mask
-          ctx.drawImage(results.segmentationMask, 0, 0, w, h);
-          // Keep only the person
+          // Person mask cropped & scaled to canvas
+          ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
           ctx.globalCompositeOperation = "source-in";
-          ctx.drawImage(results.image, 0, 0, w, h);
+          ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
 
-          // Draw background behind
           ctx.globalCompositeOperation = "destination-over";
           if (mode === "blur") {
             ctx.filter = `blur(${blurRef.current}px)`;
-            ctx.drawImage(results.image, 0, 0, w, h);
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
             ctx.filter = "none";
           } else if (mode === "image" && bgImageRef.current) {
             // cover-fit
