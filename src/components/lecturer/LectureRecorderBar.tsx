@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, forwardRef } from "react";
+import ffmpegCoreUrl from "@ffmpeg/core?url";
+import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
@@ -405,7 +407,7 @@ export const LectureRecorderBar = ({
     setConverting(true);
     setConvertProgress(0);
     setConvertElapsed(0);
-    setConvertStage("Loading encoder…");
+    setConvertStage("Preparing MP4 export…");
     const startedAt = Date.now();
     if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
     convertTimerRef.current = window.setInterval(() => {
@@ -413,31 +415,38 @@ export const LectureRecorderBar = ({
     }, 1000);
 
     try {
+      setConvertProgress(0.04);
+      setConvertStage("Loading encoder modules…");
       const { FFmpeg } = await import("@ffmpeg/ffmpeg");
       const { fetchFile } = await import("@ffmpeg/util");
-      const ffmpeg = new FFmpeg();
-      const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
-      await ffmpeg.load({
-        coreURL: `${base}/ffmpeg-core.js`,
-        wasmURL: `${base}/ffmpeg-core.wasm`,
-      });
 
-      // Real progress from FFmpeg (0..1).
+      setConvertProgress(0.1);
+      setConvertStage("Starting video encoder…");
+      const ffmpeg = new FFmpeg();
+      await ffmpeg.load({
+        coreURL: ffmpegCoreUrl,
+        wasmURL: ffmpegWasmUrl,
+      });
+      setConvertProgress(0.2);
+
+      // Real progress from FFmpeg during the encode phase.
       ffmpeg.on("progress", ({ progress }) => {
         if (typeof progress === "number" && progress >= 0) {
-          setConvertProgress(Math.min(1, progress));
+          setConvertProgress(Math.min(0.96, 0.4 + progress * 0.56));
           setConvertStage("Encoding 4K MP4…");
         }
       });
 
       const inputName = previewBlob.type.includes("mp4") ? "in.mp4" : "in.webm";
-      setConvertStage("Reading source…");
+      setConvertStage("Preparing source media…");
+      setConvertProgress(0.26);
       await ffmpeg.writeFile(inputName, await fetchFile(previewBlob));
 
+      setConvertProgress(0.38);
       setConvertStage("Encoding 4K MP4…");
       // High quality 4K H.264 + AAC. veryfast = good balance of speed/quality
       // in WASM. We always re-mux to guarantee audio is present in the MP4.
-      await ffmpeg.exec([
+      const exitCode = await ffmpeg.exec([
         "-i", inputName,
         "-c:v", "libx264",
         "-preset", "veryfast",
@@ -449,8 +458,10 @@ export const LectureRecorderBar = ({
         "-movflags", "+faststart",
         "out.mp4",
       ]);
+      if (exitCode !== 0) throw new Error(`FFmpeg exited with code ${exitCode}`);
 
       setConvertStage("Finalizing…");
+      setConvertProgress(0.98);
       const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
       const buf = new Uint8Array(data).buffer;
       const mp4Blob = new Blob([buf], { type: "video/mp4" });
