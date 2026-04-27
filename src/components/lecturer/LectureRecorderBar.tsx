@@ -491,6 +491,113 @@ export const LectureRecorderBar = ({
             {showCamera ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
           </Button>
 
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={!showCamera}
+                title="Camera options"
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="end" className="w-72 p-4 space-y-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Background
+                </Label>
+                <div className="grid grid-cols-3 gap-1">
+                  <Button
+                    size="sm"
+                    variant={bgMode === "none" ? "default" : "outline"}
+                    onClick={() => setBgMode("none")}
+                  >
+                    None
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={bgMode === "blur" ? "default" : "outline"}
+                    onClick={() => setBgMode("blur")}
+                    className="gap-1"
+                  >
+                    <Sparkles className="size-3" /> Blur
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={mirror ? "default" : "outline"}
+                    onClick={() => setMirror((m) => !m)}
+                  >
+                    Mirror
+                  </Button>
+                </div>
+                {bgMode === "blur" && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Blur strength</Label>
+                      <span className="text-xs text-muted-foreground tabular-nums">{blurAmount}px</span>
+                    </div>
+                    <Slider
+                      value={[blurAmount]}
+                      onValueChange={([v]) => setBlurAmount(v)}
+                      min={4}
+                      max={30}
+                      step={1}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Shape
+                </Label>
+                <div className="grid grid-cols-3 gap-1">
+                  <Button
+                    size="sm"
+                    variant={shape === "rounded" ? "default" : "outline"}
+                    onClick={() => setShape("rounded")}
+                    title="Rounded"
+                  >
+                    <Square className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={shape === "circle" ? "default" : "outline"}
+                    onClick={() => setShape("circle")}
+                    title="Circle"
+                  >
+                    <CircleIcon className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={shape === "rectangle" ? "default" : "outline"}
+                    onClick={() => setShape("rectangle")}
+                    title="Rectangle"
+                  >
+                    <RectangleHorizontal className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Size
+                  </Label>
+                  <span className="text-xs text-muted-foreground tabular-nums">{bubbleWidth}px</span>
+                </div>
+                <Slider
+                  value={[bubbleWidth]}
+                  onValueChange={([v]) => setBubbleWidth(v)}
+                  min={140}
+                  max={520}
+                  step={10}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {previewUrl && !recording && (
             <>
               <div className="w-px h-6 bg-border mx-1" />
