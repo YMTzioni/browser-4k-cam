@@ -417,8 +417,26 @@ export const ScreenRecorder = () => {
               <Square className="mr-2" fill="currentColor" /> Stop Recording
             </Button>
           )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant={annotateActive ? "default" : "secondary"}
+              size="sm"
+              onClick={() => setAnnotateActive((a) => !a)}
+              className="gap-2"
+            >
+              <Pencil className="size-4" />
+              {annotateActive ? "Hide annotations" : "Annotate screen"}
+            </Button>
+          </div>
         </div>
       </Card>
+
+      <AnnotationOverlay
+        ref={annotationRef}
+        active={annotateActive}
+        onClose={() => setAnnotateActive(false)}
+      />
 
       {/* Live camera preview & overlay positioner */}
       {cameraMode !== "off" && (
