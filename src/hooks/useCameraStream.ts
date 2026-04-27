@@ -300,15 +300,11 @@ export const useCameraStream = ({
         const tick = async () => {
           if (!runningRef.current) return;
           if (video.readyState >= 2) {
-            if (modeRef.current === "none") {
-              ctx.clearRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            } else {
-              try {
-                await segmenter.send({ image: video });
-              } catch {
-                /* ignore */
-              }
+            // Always run segmentation so auto-centering works in every mode.
+            try {
+              await segmenter.send({ image: video });
+            } catch {
+              /* ignore */
             }
           }
           rafRef.current = requestAnimationFrame(tick);
