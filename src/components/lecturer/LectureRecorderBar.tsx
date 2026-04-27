@@ -216,17 +216,34 @@ export const LectureRecorderBar = ({
         const video = camPreviewRef.current;
         if (bubble && video && video.readyState >= 2) {
           const bRect = bubble.getBoundingClientRect();
-          // Only draw the part of the bubble that overlaps the stage
           const dx = (bRect.left - sRect.left) * dpr;
           const dy = (bRect.top - sRect.top) * dpr;
           const dw = bRect.width * dpr;
           const dh = bRect.height * dpr;
           cctx.save();
-          const radius = 12 * dpr;
-          roundRectPath(cctx, dx, dy, dw, dh, radius);
+          const sh = shapeRef.current;
+          if (sh === "circle") {
+            const cx = dx + dw / 2;
+            const cy = dy + dh / 2;
+            const r = Math.min(dw, dh) / 2;
+            cctx.beginPath();
+            cctx.arc(cx, cy, r, 0, Math.PI * 2);
+            cctx.closePath();
+          } else if (sh === "rectangle") {
+            cctx.beginPath();
+            cctx.rect(dx, dy, dw, dh);
+          } else {
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+          }
           cctx.clip();
           try {
-            cctx.drawImage(video, dx, dy, dw, dh);
+            if (mirrorRef.current) {
+              cctx.translate(dx + dw, dy);
+              cctx.scale(-1, 1);
+              cctx.drawImage(video, 0, 0, dw, dh);
+            } else {
+              cctx.drawImage(video, dx, dy, dw, dh);
+            }
           } catch {
             /* ignore */
           }
@@ -234,8 +251,19 @@ export const LectureRecorderBar = ({
           // Ring
           cctx.lineWidth = 2 * dpr;
           cctx.strokeStyle = "hsl(var(--primary))";
-          roundRectPath(cctx, dx, dy, dw, dh, radius);
-          cctx.stroke();
+          if (sh === "circle") {
+            const cx = dx + dw / 2;
+            const cy = dy + dh / 2;
+            const r = Math.min(dw, dh) / 2;
+            cctx.beginPath();
+            cctx.arc(cx, cy, r, 0, Math.PI * 2);
+            cctx.stroke();
+          } else if (sh === "rectangle") {
+            cctx.strokeRect(dx, dy, dw, dh);
+          } else {
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+            cctx.stroke();
+          }
         }
 
         
