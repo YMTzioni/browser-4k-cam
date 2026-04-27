@@ -72,13 +72,16 @@ export const LectureRecorderBar = ({
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [converting, setConverting] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerStreamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const drawIntervalRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
 
@@ -108,9 +111,12 @@ export const LectureRecorderBar = ({
 
   const cleanup = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (drawIntervalRef.current) window.clearInterval(drawIntervalRef.current);
+    drawIntervalRef.current = null;
     composerStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    audioCtxRef.current?.close().catch(() => {});
+    audioCtxRef.current = null;
     composerStreamRef.current = null;
     micStreamRef.current = null;
   };
@@ -211,41 +217,65 @@ export const LectureRecorderBar = ({
           cctx.stroke();
         }
 
-        rafRef.current = requestAnimationFrame(drawFrame);
+        
       };
+      // Use a fixed-rate timer instead of rAF — rAF is throttled when the tab
+      // loses focus or when expensive layout work happens, which causes the
+      // recorded video to "skip". setInterval gives us a steady cadence.
+      const FPS = 30;
       drawFrame();
+      drawIntervalRef.current = window.setInterval(drawFrame, 1000 / FPS);
 
-      const composerStream = composer.captureStream(30);
+      const composerStream = composer.captureStream(FPS);
       composerStreamRef.current = composerStream;
 
+      // Build a single mixed audio track via WebAudio so the recorder receives
+      // a continuous, gap-free audio stream (avoids muted segments when tracks
+      // are added/removed or briefly stall).
+      const audioTracks: MediaStreamTrack[] = [];
       if (withMic) {
         try {
           micStreamRef.current = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true },
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+            },
           });
+          const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+          audioCtxRef.current = ctx;
+          const dest = ctx.createMediaStreamDestination();
+          const src = ctx.createMediaStreamSource(micStreamRef.current);
+          src.connect(dest);
+          dest.stream.getAudioTracks().forEach((t) => audioTracks.push(t));
         } catch {
           toast.error("Microphone denied — recording without mic");
         }
       }
 
-      const tracks: MediaStreamTrack[] = [...composerStream.getVideoTracks()];
-      micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
+      const tracks: MediaStreamTrack[] = [
+        ...composerStream.getVideoTracks(),
+        ...audioTracks,
+      ];
       const stream = new MediaStream(tracks);
 
       const recorder = new MediaRecorder(stream, {
         mimeType: pickMimeType(),
-        videoBitsPerSecond: 8_000_000,
+        videoBitsPerSecond: 6_000_000,
         audioBitsPerSecond: 128_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        setPreviewBlob(blob);
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
       };
 
-      recorder.start(1000);
+      // Larger timeslice = fewer chunk boundaries = smoother playback.
+      recorder.start(2000);
       recorderRef.current = recorder;
       setRecording(true);
       setPaused(false);
@@ -282,12 +312,57 @@ export const LectureRecorderBar = ({
     toast.success("Recording saved");
   };
 
-  const download = () => {
-    if (!previewUrl) return;
+  const triggerDownload = (url: string, ext: string) => {
     const a = document.createElement("a");
-    a.href = previewUrl;
-    a.download = `lecture-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
+    a.href = url;
+    a.download = `lecture-${new Date().toISOString().replace(/[:.]/g, "-")}.${ext}`;
     a.click();
+  };
+
+  const downloadWebm = () => {
+    if (previewUrl) triggerDownload(previewUrl, "webm");
+  };
+
+  const downloadMp4 = async () => {
+    if (!previewBlob) return;
+    setConverting(true);
+    const t = toast.loading("Converting to MP4…");
+    try {
+      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+      const { fetchFile } = await import("@ffmpeg/util");
+      const ffmpeg = new FFmpeg();
+      const base = "https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd";
+      await ffmpeg.load({
+        coreURL: `${base}/ffmpeg-core.js`,
+        wasmURL: `${base}/ffmpeg-core.wasm`,
+      });
+      await ffmpeg.writeFile("in.webm", await fetchFile(previewBlob));
+      // Re-encode video to H.264, copy audio if AAC-compatible (re-encode to AAC).
+      await ffmpeg.exec([
+        "-i", "in.webm",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        "out.mp4",
+      ]);
+      const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
+      const buf = new Uint8Array(data).buffer;
+      const mp4Blob = new Blob([buf], { type: "video/mp4" });
+      const url = URL.createObjectURL(mp4Blob);
+      triggerDownload(url, "mp4");
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      toast.success("MP4 ready", { id: t });
+    } catch (err) {
+      console.error(err);
+      toast.error("MP4 conversion failed — downloading WebM instead", { id: t });
+      downloadWebm();
+    } finally {
+      setConverting(false);
+    }
   };
 
   return (
@@ -370,8 +445,23 @@ export const LectureRecorderBar = ({
           {previewUrl && !recording && (
             <>
               <div className="w-px h-6 bg-border mx-1" />
-              <Button size="sm" variant="secondary" onClick={download} className="gap-2">
-                <Download className="size-4" /> Download
+              <Button
+                size="sm"
+                onClick={downloadMp4}
+                disabled={converting}
+                className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
+              >
+                <Download className="size-4" />
+                {converting ? "Converting…" : "MP4"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={downloadWebm}
+                disabled={converting}
+                className="gap-2"
+              >
+                <Download className="size-4" /> WebM
               </Button>
             </>
           )}
