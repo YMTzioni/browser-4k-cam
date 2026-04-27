@@ -85,8 +85,9 @@ export const useCameraStream = ({
       try {
         // Proactively check permission state when supported
         try {
-          // @ts-expect-error - "camera" not in PermissionName typings everywhere
-          const status = await navigator.permissions?.query({ name: "camera" });
+          const status = await (navigator.permissions as Permissions | undefined)?.query({
+            name: "camera" as PermissionName,
+          });
           if (status?.state === "denied") {
             setError(
               "Camera blocked. Click the camera icon in your browser's address bar and allow access, then try again."
