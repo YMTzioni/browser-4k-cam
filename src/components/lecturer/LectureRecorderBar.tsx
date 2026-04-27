@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, forwardRef } from "react";
-import ffmpegCoreUrl from "@ffmpeg/core/dist/esm/ffmpeg-core.js?url";
-import ffmpegWasmUrl from "@ffmpeg/core/dist/esm/ffmpeg-core.wasm?url";
+import ffmpegCoreUrl from "@ffmpeg/core?url";
+import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
