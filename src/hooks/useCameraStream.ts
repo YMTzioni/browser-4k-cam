@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Results, SelfieSegmentation as SelfieSegmentationType } from "@mediapipe/selfie_segmentation";
+import type { FaceDetection as FaceDetectionType, Results as FaceResults } from "@mediapipe/face_detection";
 
 // MediaPipe ships a UMD bundle that attaches to `window` and doesn't expose
 // a proper ES module export under Vite. Load it dynamically and pull the
@@ -15,6 +16,19 @@ const loadSelfieSegmentation = async (): Promise<new (cfg: { locateFile: (f: str
     throw new Error("MediaPipe SelfieSegmentation failed to load.");
   }
   return Ctor as new (cfg: { locateFile: (f: string) => string }) => SelfieSegmentationType;
+};
+
+const loadFaceDetection = async (): Promise<new (cfg: { locateFile: (f: string) => string }) => FaceDetectionType> => {
+  const mod: Record<string, unknown> = await import("@mediapipe/face_detection");
+  const w = window as unknown as Record<string, unknown>;
+  const Ctor =
+    (mod.FaceDetection as unknown) ||
+    ((mod.default as Record<string, unknown> | undefined)?.FaceDetection as unknown) ||
+    (w.FaceDetection as unknown);
+  if (typeof Ctor !== "function") {
+    throw new Error("MediaPipe FaceDetection failed to load.");
+  }
+  return Ctor as new (cfg: { locateFile: (f: string) => string }) => FaceDetectionType;
 };
 
 export type BackgroundMode = "none" | "blur" | "image";
@@ -44,6 +58,7 @@ export const useCameraStream = ({
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const segmenterRef = useRef<SelfieSegmentationType | null>(null);
+  const faceDetectorRef = useRef<FaceDetectionType | null>(null);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
   const rawStreamRef = useRef<MediaStream | null>(null);
   const processedStreamRef = useRef<MediaStream | null>(null);
@@ -125,6 +140,10 @@ export const useCameraStream = ({
       segmenterRef.current.close().catch(() => {});
       segmenterRef.current = null;
     }
+    if (faceDetectorRef.current) {
+      faceDetectorRef.current.close().catch(() => {});
+      faceDetectorRef.current = null;
+    }
     rawStreamRef.current?.getTracks().forEach((t) => t.stop());
     processedStreamRef.current?.getTracks().forEach((t) => t.stop());
     rawStreamRef.current = null;
@@ -196,45 +215,41 @@ export const useCameraStream = ({
         });
         segmenter.setOptions({ modelSelection: 1 });
 
-        // Auto-center state — smoothed person bbox center (in 0..1 of source).
-        // We compute the centroid of the segmentation mask each frame and
-        // ease the crop window toward it so the person stays centered.
-        const center = { x: 0.5, y: 0.5, scale: 1 };
-        const maskAnalyzer = document.createElement("canvas");
-        maskAnalyzer.width = 64;
-        maskAnalyzer.height = 36;
-        const mctx = maskAnalyzer.getContext("2d", { willReadFrequently: true })!;
+        // Face detector — drives auto-centering.
+        const FaceDetectionCtor = await loadFaceDetection();
+        if (cancelled) return;
+        const faceDetector = new FaceDetectionCtor({
+          locateFile: (file) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
+        });
+        faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
+        faceDetectorRef.current = faceDetector;
 
-        const computePersonBox = (mask: CanvasImageSource) => {
-          const mw = maskAnalyzer.width;
-          const mh = maskAnalyzer.height;
-          mctx.clearRect(0, 0, mw, mh);
-          mctx.drawImage(mask, 0, 0, mw, mh);
-          const { data } = mctx.getImageData(0, 0, mw, mh);
-          let count = 0;
-          let minX = mw, maxX = 0, minY = mh, maxY = 0;
-          for (let y = 0; y < mh; y++) {
-            for (let x = 0; x < mw; x++) {
-              const i = (y * mw + x) * 4;
-              const v = data[i] || data[i + 3];
-              if (v > 128) {
-                count++;
-                if (x < minX) minX = x; if (x > maxX) maxX = x;
-                if (y < minY) minY = y; if (y > maxY) maxY = y;
-              }
-            }
+        // Auto-center state — smoothed face center & zoom (0..1 of source).
+        const center = { x: 0.5, y: 0.5, scale: 1 };
+        // Latest detected face box (normalized). Updated by FaceDetection.
+        const faceBoxRef: { current: { cx: number; cy: number; bw: number; bh: number } | null } = { current: null };
+
+        faceDetector.onResults((results: FaceResults) => {
+          const det = results.detections?.[0];
+          if (!det) {
+            faceBoxRef.current = null;
+            return;
           }
-          if (count < 50) return null;
-          // Use bounding box center horizontally; bias vertically toward the
-          // TOP of the box (head/face area) so the camera centers on the face,
-          // not the torso/centroid of the whole silhouette.
-          const bw = (maxX - minX) / mw;
-          const bh = (maxY - minY) / mh;
-          const cx = (minX + maxX) / 2 / mw;
-          // Face is roughly the top ~22% of the person box.
-          const cy = (minY / mh) + bh * 0.22;
-          return { cx, cy, bw, bh };
-        };
+          // boundingBox is normalized (xCenter, yCenter, width, height).
+          const bb = det.boundingBox as unknown as {
+            xCenter: number;
+            yCenter: number;
+            width: number;
+            height: number;
+          };
+          faceBoxRef.current = {
+            cx: bb.xCenter,
+            cy: bb.yCenter,
+            bw: bb.width,
+            bh: bb.height,
+          };
+        });
 
         segmenter.onResults((results: Results) => {
           const w = canvas.width;
@@ -242,16 +257,18 @@ export const useCameraStream = ({
           const mode = modeRef.current;
 
           if (autoCenterRef.current) {
-            // Compute person bbox + face-biased center and ease toward it.
-            const box = computePersonBox(results.segmentationMask);
+            // Use the latest face box from FaceDetection.
+            const box = faceBoxRef.current;
             if (box) {
-              // Use the WIDTH of the person to drive zoom (head width is a more
-              // stable proxy for "how big should the face appear"). Aim for the
-              // person to fill ~55% of the frame width => stronger zoom-in.
-              const targetScale = Math.min(3.0, Math.max(1.1, 0.55 / Math.max(0.05, box.bw)));
-              center.x += (box.cx - center.x) * 0.2;
-              center.y += (box.cy - center.y) * 0.2;
-              center.scale += (targetScale - center.scale) * 0.12;
+              // Aim for the FACE to fill ~32% of frame width — strong but
+              // comfortable head-and-shoulders framing. Clamp scale 1.2..3.5.
+              const targetScale = Math.min(3.5, Math.max(1.2, 0.32 / Math.max(0.04, box.bw)));
+              // Add a small downward offset so the face sits a bit above
+              // vertical center (headroom looks more natural than dead-center).
+              const targetY = box.cy + box.bh * 0.1;
+              center.x += (box.cx - center.x) * 0.22;
+              center.y += (targetY - center.y) * 0.22;
+              center.scale += (targetScale - center.scale) * 0.14;
             }
           } else {
             // Ease back to a neutral, full-frame view.
@@ -314,14 +331,23 @@ export const useCameraStream = ({
 
         // Processing loop — always runs so canvas mirrors raw video even in "none" mode
         runningRef.current = true;
+        let faceFrame = 0;
         const tick = async () => {
           if (!runningRef.current) return;
           if (video.readyState >= 2) {
-            // Always run segmentation so auto-centering works in every mode.
             try {
               await segmenter.send({ image: video });
             } catch {
               /* ignore */
+            }
+            // Run face detection every other frame (~15fps) — plenty for tracking
+            // and keeps CPU usage reasonable.
+            if (autoCenterRef.current && faceFrame++ % 2 === 0) {
+              try {
+                await faceDetector.send({ image: video });
+              } catch {
+                /* ignore */
+              }
             }
           }
           rafRef.current = requestAnimationFrame(tick);
