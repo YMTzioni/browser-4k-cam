@@ -103,7 +103,6 @@ export const LectureRecorderBar = ({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerStreamRef = useRef<MediaStream | null>(null);
   const drawIntervalRef = useRef<number | null>(null);
@@ -146,8 +145,6 @@ export const LectureRecorderBar = ({
     drawIntervalRef.current = null;
     composerStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
-    audioCtxRef.current?.close().catch(() => {});
-    audioCtxRef.current = null;
     composerStreamRef.current = null;
     micStreamRef.current = null;
   };
@@ -299,9 +296,9 @@ export const LectureRecorderBar = ({
       const composerStream = composer.captureStream(FPS);
       composerStreamRef.current = composerStream;
 
-      // Build a single mixed audio track via WebAudio so the recorder receives
-      // a continuous, gap-free audio stream (avoids muted segments when tracks
-      // are added/removed or briefly stall).
+      // Feed the mic track directly into MediaRecorder. This is more reliable
+      // than routing through an AudioContext for a single-input lecture setup,
+      // and avoids silent exports on browsers that suspend WebAudio graphs.
       const audioTracks: MediaStreamTrack[] = [];
       if (withMic) {
         try {
@@ -310,15 +307,14 @@ export const LectureRecorderBar = ({
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
-              channelCount: 1,
+              channelCount: 2,
+              sampleRate: 48000,
             },
           });
-          const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
-          audioCtxRef.current = ctx;
-          const dest = ctx.createMediaStreamDestination();
-          const src = ctx.createMediaStreamSource(micStreamRef.current);
-          src.connect(dest);
-          dest.stream.getAudioTracks().forEach((t) => audioTracks.push(t));
+          micStreamRef.current.getAudioTracks().forEach((track) => {
+            track.enabled = true;
+            audioTracks.push(track);
+          });
         } catch {
           toast.error("Microphone denied — recording without mic");
         }
