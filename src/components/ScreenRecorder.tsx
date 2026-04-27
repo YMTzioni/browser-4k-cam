@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Circle, Square, Download, Monitor, Mic, Video, Camera } from "lucide-react";
+import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2 } from "lucide-react";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
 type CameraMode = "off" | "overlay" | "only";
@@ -32,6 +32,8 @@ export const ScreenRecorder = () => {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [camPreviewActive, setCamPreviewActive] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -41,23 +43,132 @@ export const ScreenRecorder = () => {
   const compositeStreamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
+  const camPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const pipWindowRef = useRef<Window | null>(null);
 
   useEffect(() => {
-    return () => stopAll();
+    return () => {
+      stopAll();
+      stopCameraPreview();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Acquire / release the camera preview when cameraMode changes (outside recording too)
+  useEffect(() => {
+    if (cameraMode === "off") {
+      stopCameraPreview();
+      return;
+    }
+    startCameraPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraMode]);
+
+  const startCameraPreview = async () => {
+    if (camStreamRef.current) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      });
+      camStreamRef.current = stream;
+      setCamPreviewActive(true);
+      requestAnimationFrame(() => {
+        if (camPreviewRef.current) {
+          camPreviewRef.current.srcObject = stream;
+          camPreviewRef.current.play().catch(() => {});
+        }
+      });
+    } catch {
+      toast.error("Camera access denied");
+      setCameraMode("off");
+    }
+  };
+
+  const stopCameraPreview = () => {
+    closePip();
+    if (camStreamRef.current && !recording) {
+      camStreamRef.current.getTracks().forEach((t) => t.stop());
+      camStreamRef.current = null;
+    }
+    setCamPreviewActive(false);
+  };
+
+  const openPip = async () => {
+    const stream = camStreamRef.current;
+    if (!stream) {
+      toast.error("Enable the camera first");
+      return;
+    }
+    // Document Picture-in-Picture (Chrome/Edge)
+    // @ts-expect-error - documentPictureInPicture is not in TS lib yet
+    const dpip = window.documentPictureInPicture;
+    if (dpip?.requestWindow) {
+      try {
+        const pipWin: Window = await dpip.requestWindow({ width: 320, height: 240 });
+        pipWindowRef.current = pipWin;
+        pipWin.document.body.style.margin = "0";
+        pipWin.document.body.style.background = "#000";
+        const v = pipWin.document.createElement("video");
+        v.autoplay = true;
+        v.muted = true;
+        v.playsInline = true;
+        v.style.width = "100%";
+        v.style.height = "100%";
+        v.style.objectFit = "cover";
+        v.style.transform = "scaleX(-1)";
+        v.srcObject = stream;
+        pipWin.document.body.appendChild(v);
+        pipWin.addEventListener("pagehide", () => {
+          pipWindowRef.current = null;
+          setPipActive(false);
+        });
+        setPipActive(true);
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    // Fallback: native video element PiP
+    if (camPreviewRef.current && "requestPictureInPicture" in HTMLVideoElement.prototype) {
+      try {
+        await camPreviewRef.current.requestPictureInPicture();
+        setPipActive(true);
+        camPreviewRef.current.addEventListener(
+          "leavepictureinpicture",
+          () => setPipActive(false),
+          { once: true },
+        );
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    toast.error("Picture-in-Picture not supported in this browser");
+  };
+
+  const closePip = () => {
+    try {
+      pipWindowRef.current?.close();
+    } catch {
+      /* noop */
+    }
+    pipWindowRef.current = null;
+    if (document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(() => {});
+    }
+    setPipActive(false);
+  };
 
   const stopAll = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     displayStreamRef.current?.getTracks().forEach((t) => t.stop());
-    camStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     compositeStreamRef.current?.getTracks().forEach((t) => t.stop());
     displayStreamRef.current = null;
-    camStreamRef.current = null;
     micStreamRef.current = null;
     compositeStreamRef.current = null;
+    // Note: we keep camStreamRef alive so the preview stays visible after stopping a recording
   };
 
   const pickMimeType = () => {
@@ -82,9 +193,7 @@ export const ScreenRecorder = () => {
       const { w, h } = RES_MAP[resolution];
       const frameRate = Number(fps);
 
-      // Acquire streams
       let displayStream: MediaStream | null = null;
-      let camStream: MediaStream | null = null;
 
       if (cameraMode !== "only") {
         displayStream = await navigator.mediaDevices.getDisplayMedia({
@@ -98,24 +207,12 @@ export const ScreenRecorder = () => {
         displayStreamRef.current = displayStream;
       }
 
-      if (cameraMode !== "off") {
-        try {
-          camStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              width: { ideal: cameraMode === "only" ? w : 1280 },
-              height: { ideal: cameraMode === "only" ? h : 720 },
-              frameRate: { ideal: frameRate },
-            },
-          });
-          camStreamRef.current = camStream;
-        } catch {
-          toast.error("Camera access denied");
-          stopAll();
-          return;
-        }
+      // Make sure camera is acquired if needed
+      if (cameraMode !== "off" && !camStreamRef.current) {
+        await startCameraPreview();
       }
+      const camStream = camStreamRef.current;
 
-      // Mic
       if (withMic) {
         try {
           const mic = await navigator.mediaDevices.getUserMedia({
@@ -127,11 +224,9 @@ export const ScreenRecorder = () => {
         }
       }
 
-      // Build the recording stream
       let recordStream: MediaStream;
 
       if (cameraMode === "overlay" && displayStream && camStream) {
-        // Composite screen + camera PiP onto a canvas
         const screenVideo = await playVideo(displayStream);
         const camVideo = await playVideo(camStream);
 
@@ -147,13 +242,11 @@ export const ScreenRecorder = () => {
 
         const draw = () => {
           ctx.drawImage(screenVideo, 0, 0, canvasW, canvasH);
-          // Camera PiP — bottom-right, ~22% width, 16:9
           const camW = Math.round(canvasW * 0.22);
-          const camH = Math.round(camW * 9 / 16);
+          const camH = Math.round((camW * 9) / 16);
           const margin = Math.round(canvasW * 0.015);
           const x = canvasW - camW - margin;
           const y = canvasH - camH - margin;
-          // Border
           ctx.fillStyle = "rgba(0,0,0,0.5)";
           ctx.fillRect(x - 4, y - 4, camW + 8, camH + 8);
           ctx.drawImage(camVideo, x, y, camW, camH);
@@ -200,7 +293,6 @@ export const ScreenRecorder = () => {
         stopAll();
       };
 
-      // Auto-stop if user cancels via browser UI
       const primaryVideo =
         displayStream?.getVideoTracks()[0] || camStream?.getVideoTracks()[0];
       primaryVideo?.addEventListener("ended", () => {
@@ -293,6 +385,43 @@ export const ScreenRecorder = () => {
           )}
         </div>
       </Card>
+
+      {/* Live camera preview */}
+      {camPreviewActive && (
+        <Card className="p-4 border-border/50">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+              <Camera className="size-4" /> Live camera preview
+            </h2>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={pipActive ? closePip : openPip}
+              className="gap-2"
+            >
+              <PictureInPicture2 className="size-4" />
+              {pipActive ? "Close pop-out" : "Pop out"}
+            </Button>
+          </div>
+          <div className="relative rounded-md overflow-hidden bg-black aspect-video max-w-sm mx-auto">
+            <video
+              ref={camPreviewRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover -scale-x-100"
+            />
+            {recording && (
+              <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-primary/90 text-primary-foreground text-xs font-semibold">
+                <span className="size-1.5 rounded-full bg-primary-foreground animate-pulse" /> REC
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground mt-3 text-center">
+            Use <strong>Pop out</strong> to float the camera in a separate window you can drag onto any app while recording.
+          </p>
+        </Card>
+      )}
 
       <Card className="p-6 border-border/50">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
