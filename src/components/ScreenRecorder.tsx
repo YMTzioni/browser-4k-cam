@@ -51,8 +51,17 @@ export const ScreenRecorder = () => {
   });
 
   useEffect(() => {
-    if (camError) toast.error(camError);
+    if (camError) {
+      toast.error(camError, { duration: 6000 });
+    }
   }, [camError]);
+
+  const retryCamera = () => {
+    // Toggling off then back on re-runs the camera hook
+    const prev = cameraMode;
+    setCameraMode("off");
+    setTimeout(() => setCameraMode(prev === "off" ? "overlay" : prev), 100);
+  };
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
