@@ -140,6 +140,10 @@ export const useCameraStream = ({
       segmenterRef.current.close().catch(() => {});
       segmenterRef.current = null;
     }
+    if (faceDetectorRef.current) {
+      faceDetectorRef.current.close().catch(() => {});
+      faceDetectorRef.current = null;
+    }
     rawStreamRef.current?.getTracks().forEach((t) => t.stop());
     processedStreamRef.current?.getTracks().forEach((t) => t.stop());
     rawStreamRef.current = null;
