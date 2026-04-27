@@ -4,8 +4,10 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2 } from "lucide-react";
+import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles } from "lucide-react";
+import { useCameraStream, BackgroundMode } from "@/hooks/useCameraStream";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
 type CameraMode = "off" | "overlay" | "only";
@@ -29,16 +31,32 @@ export const ScreenRecorder = () => {
   const [fps, setFps] = useState<"30" | "60">("60");
   const [withMic, setWithMic] = useState(false);
   const [cameraMode, setCameraMode] = useState<CameraMode>("off");
+  const [bgMode, setBgMode] = useState<BackgroundMode>("none");
+  const [blurAmount, setBlurAmount] = useState(12);
+  const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [camPreviewActive, setCamPreviewActive] = useState(false);
   const [pipActive, setPipActive] = useState(false);
+
+  // Bubble position in NORMALIZED coords (0..1) relative to the screen capture
+  const [bubblePos, setBubblePos] = useState({ x: 0.76, y: 0.76 }); // top-left
+  const [bubbleSize, setBubbleSize] = useState(0.22); // width as fraction of screen width
+
+  const { processedStream: camStream, canvasRef: camCanvasRef, error: camError } = useCameraStream({
+    enabled: cameraMode !== "off",
+    backgroundMode: bgMode,
+    backgroundImageUrl: bgImageUrl,
+    blurAmount,
+  });
+
+  useEffect(() => {
+    if (camError) toast.error(camError);
+  }, [camError]);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const displayStreamRef = useRef<MediaStream | null>(null);
-  const camStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const compositeStreamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -46,118 +64,21 @@ export const ScreenRecorder = () => {
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
   const pipWindowRef = useRef<Window | null>(null);
 
+  // Live-updating bubble position ref (for the canvas draw loop)
+  const bubblePosRef = useRef(bubblePos);
+  const bubbleSizeRef = useRef(bubbleSize);
+  useEffect(() => { bubblePosRef.current = bubblePos; }, [bubblePos]);
+  useEffect(() => { bubbleSizeRef.current = bubbleSize; }, [bubbleSize]);
+
+  // Bind processed camera stream to preview <video>
   useEffect(() => {
-    return () => {
-      stopAll();
-      stopCameraPreview();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (camPreviewRef.current && camStream) {
+      camPreviewRef.current.srcObject = camStream;
+      camPreviewRef.current.play().catch(() => {});
+    }
+  }, [camStream]);
 
-  // Acquire / release the camera preview when cameraMode changes (outside recording too)
-  useEffect(() => {
-    if (cameraMode === "off") {
-      stopCameraPreview();
-      return;
-    }
-    startCameraPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraMode]);
-
-  const startCameraPreview = async () => {
-    if (camStreamRef.current) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-      });
-      camStreamRef.current = stream;
-      setCamPreviewActive(true);
-      requestAnimationFrame(() => {
-        if (camPreviewRef.current) {
-          camPreviewRef.current.srcObject = stream;
-          camPreviewRef.current.play().catch(() => {});
-        }
-      });
-    } catch {
-      toast.error("Camera access denied");
-      setCameraMode("off");
-    }
-  };
-
-  const stopCameraPreview = () => {
-    closePip();
-    if (camStreamRef.current && !recording) {
-      camStreamRef.current.getTracks().forEach((t) => t.stop());
-      camStreamRef.current = null;
-    }
-    setCamPreviewActive(false);
-  };
-
-  const openPip = async () => {
-    const stream = camStreamRef.current;
-    if (!stream) {
-      toast.error("Enable the camera first");
-      return;
-    }
-    // Document Picture-in-Picture (Chrome/Edge)
-    // @ts-expect-error - documentPictureInPicture is not in TS lib yet
-    const dpip = window.documentPictureInPicture;
-    if (dpip?.requestWindow) {
-      try {
-        const pipWin: Window = await dpip.requestWindow({ width: 320, height: 240 });
-        pipWindowRef.current = pipWin;
-        pipWin.document.body.style.margin = "0";
-        pipWin.document.body.style.background = "#000";
-        const v = pipWin.document.createElement("video");
-        v.autoplay = true;
-        v.muted = true;
-        v.playsInline = true;
-        v.style.width = "100%";
-        v.style.height = "100%";
-        v.style.objectFit = "cover";
-        v.style.transform = "scaleX(-1)";
-        v.srcObject = stream;
-        pipWin.document.body.appendChild(v);
-        pipWin.addEventListener("pagehide", () => {
-          pipWindowRef.current = null;
-          setPipActive(false);
-        });
-        setPipActive(true);
-        return;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    // Fallback: native video element PiP
-    if (camPreviewRef.current && "requestPictureInPicture" in HTMLVideoElement.prototype) {
-      try {
-        await camPreviewRef.current.requestPictureInPicture();
-        setPipActive(true);
-        camPreviewRef.current.addEventListener(
-          "leavepictureinpicture",
-          () => setPipActive(false),
-          { once: true },
-        );
-        return;
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    toast.error("Picture-in-Picture not supported in this browser");
-  };
-
-  const closePip = () => {
-    try {
-      pipWindowRef.current?.close();
-    } catch {
-      /* noop */
-    }
-    pipWindowRef.current = null;
-    if (document.pictureInPictureElement) {
-      document.exitPictureInPicture().catch(() => {});
-    }
-    setPipActive(false);
-  };
+  useEffect(() => () => stopAll(), []);
 
   const stopAll = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -168,7 +89,7 @@ export const ScreenRecorder = () => {
     displayStreamRef.current = null;
     micStreamRef.current = null;
     compositeStreamRef.current = null;
-    // Note: we keep camStreamRef alive so the preview stays visible after stopping a recording
+    closePip();
   };
 
   const pickMimeType = () => {
@@ -186,6 +107,60 @@ export const ScreenRecorder = () => {
     v.muted = true;
     v.playsInline = true;
     return v.play().then(() => v).catch(() => v);
+  };
+
+  const openPip = async () => {
+    if (!camStream) {
+      toast.error("Enable the camera first");
+      return;
+    }
+    // @ts-expect-error - documentPictureInPicture not in TS lib
+    const dpip = window.documentPictureInPicture;
+    if (dpip?.requestWindow) {
+      try {
+        const pipWin: Window = await dpip.requestWindow({ width: 320, height: 240 });
+        pipWindowRef.current = pipWin;
+        pipWin.document.body.style.margin = "0";
+        pipWin.document.body.style.background = "#000";
+        const v = pipWin.document.createElement("video");
+        v.autoplay = true;
+        v.muted = true;
+        v.playsInline = true;
+        v.style.width = "100%";
+        v.style.height = "100%";
+        v.style.objectFit = "cover";
+        v.srcObject = camStream;
+        pipWin.document.body.appendChild(v);
+        pipWin.addEventListener("pagehide", () => {
+          pipWindowRef.current = null;
+          setPipActive(false);
+        });
+        setPipActive(true);
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    if (camPreviewRef.current && "requestPictureInPicture" in HTMLVideoElement.prototype) {
+      try {
+        await camPreviewRef.current.requestPictureInPicture();
+        setPipActive(true);
+        camPreviewRef.current.addEventListener("leavepictureinpicture", () => setPipActive(false), { once: true });
+        return;
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    toast.error("Picture-in-Picture not supported in this browser");
+  };
+
+  const closePip = () => {
+    try { pipWindowRef.current?.close(); } catch { /* noop */ }
+    pipWindowRef.current = null;
+    if (document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(() => {});
+    }
+    setPipActive(false);
   };
 
   const startRecording = async () => {
@@ -206,12 +181,6 @@ export const ScreenRecorder = () => {
         });
         displayStreamRef.current = displayStream;
       }
-
-      // Make sure camera is acquired if needed
-      if (cameraMode !== "off" && !camStreamRef.current) {
-        await startCameraPreview();
-      }
-      const camStream = camStreamRef.current;
 
       if (withMic) {
         try {
@@ -242,14 +211,15 @@ export const ScreenRecorder = () => {
 
         const draw = () => {
           ctx.drawImage(screenVideo, 0, 0, canvasW, canvasH);
-          const camW = Math.round(canvasW * 0.22);
-          const camH = Math.round((camW * 9) / 16);
-          const margin = Math.round(canvasW * 0.015);
-          const x = canvasW - camW - margin;
-          const y = canvasH - camH - margin;
+          // Live bubble position from refs (updates in real time during recording)
+          const bw = Math.round(canvasW * bubbleSizeRef.current);
+          const bh = Math.round((bw * 9) / 16);
+          const bx = Math.round(canvasW * bubblePosRef.current.x);
+          const by = Math.round(canvasH * bubblePosRef.current.y);
+          // shadow border
           ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.fillRect(x - 4, y - 4, camW + 8, camH + 8);
-          ctx.drawImage(camVideo, x, y, camW, camH);
+          ctx.fillRect(bx - 4, by - 4, bw + 8, bh + 8);
+          ctx.drawImage(camVideo, bx, by, bw, bh);
           rafRef.current = requestAnimationFrame(draw);
         };
         draw();
@@ -307,7 +277,7 @@ export const ScreenRecorder = () => {
       setElapsed(0);
       setPreviewUrl(null);
       timerRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-      toast.success("Recording started");
+      toast.success("Recording started — drag the bubble to reposition live");
     } catch (err) {
       console.error(err);
       toast.error("Failed to start recording");
@@ -329,6 +299,14 @@ export const ScreenRecorder = () => {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     a.download = `recording-${ts}.webm`;
     a.click();
+  };
+
+  const onBgImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setBgImageUrl(url);
+    setBgMode("image");
   };
 
   const screenDisabled = cameraMode === "only";
@@ -386,30 +364,26 @@ export const ScreenRecorder = () => {
         </div>
       </Card>
 
-      {/* Live camera preview */}
-      {camPreviewActive && (
-        <Card className="p-4 border-border/50">
-          <div className="flex items-center justify-between mb-3">
+      {/* Live camera preview & overlay positioner */}
+      {cameraMode !== "off" && (
+        <Card className="p-4 border-border/50 space-y-4">
+          <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-              <Camera className="size-4" /> Live camera preview
+              <Camera className="size-4" /> Live camera
             </h2>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={pipActive ? closePip : openPip}
-              className="gap-2"
-            >
+            <Button size="sm" variant="secondary" onClick={pipActive ? closePip : openPip} className="gap-2">
               <PictureInPicture2 className="size-4" />
               {pipActive ? "Close pop-out" : "Pop out"}
             </Button>
           </div>
+
           <div className="relative rounded-md overflow-hidden bg-black aspect-video max-w-sm mx-auto">
             <video
               ref={camPreviewRef}
               autoPlay
               muted
               playsInline
-              className="w-full h-full object-cover -scale-x-100"
+              className="w-full h-full object-cover"
             />
             {recording && (
               <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-primary/90 text-primary-foreground text-xs font-semibold">
@@ -417,9 +391,53 @@ export const ScreenRecorder = () => {
               </div>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-3 text-center">
-            Use <strong>Pop out</strong> to float the camera in a separate window you can drag onto any app while recording.
-          </p>
+
+          {/* Background controls */}
+          <div className="space-y-3 pt-2 border-t border-border/50">
+            <Label className="flex items-center gap-2 text-sm">
+              <Sparkles className="size-4" /> Background effect
+            </Label>
+            <Select value={bgMode} onValueChange={(v) => setBgMode(v as BackgroundMode)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                <SelectItem value="blur">Blur background</SelectItem>
+                <SelectItem value="image">Replace with image</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {bgMode === "blur" && (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Blur amount: {blurAmount}px</Label>
+                <Slider value={[blurAmount]} min={2} max={30} step={1} onValueChange={(v) => setBlurAmount(v[0])} />
+              </div>
+            )}
+
+            {bgMode === "image" && (
+              <div className="space-y-2">
+                <Label htmlFor="bg-upload" className="flex items-center gap-2 text-xs cursor-pointer text-muted-foreground hover:text-foreground">
+                  <ImageIcon className="size-4" /> Upload background image
+                </Label>
+                <input id="bg-upload" type="file" accept="image/*" onChange={onBgImageUpload} className="text-xs text-muted-foreground" />
+                {bgImageUrl && (
+                  <img src={bgImageUrl} alt="bg" className="w-16 h-10 object-cover rounded border border-border" />
+                )}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Background processing runs locally with on-device AI. First load may take a moment.
+            </p>
+          </div>
+
+          {cameraMode === "overlay" && (
+            <OverlayPositioner
+              pos={bubblePos}
+              size={bubbleSize}
+              onPosChange={setBubblePos}
+              onSizeChange={setBubbleSize}
+              camStream={camStream}
+            />
+          )}
         </Card>
       )}
 
@@ -491,6 +509,92 @@ export const ScreenRecorder = () => {
           <video src={previewUrl} controls className="w-full rounded-md bg-black aspect-video" />
         </Card>
       )}
+    </div>
+  );
+};
+
+/**
+ * Visual positioner: a 16:9 frame representing the screen, with a draggable
+ * bubble showing where the camera will appear. Updates in real time —
+ * during recording the canvas reads the same normalized position so you
+ * can move the bubble live.
+ */
+const OverlayPositioner = ({
+  pos,
+  size,
+  onPosChange,
+  onSizeChange,
+  camStream,
+}: {
+  pos: { x: number; y: number };
+  size: number;
+  onPosChange: (p: { x: number; y: number }) => void;
+  onSizeChange: (s: number) => void;
+  camStream: MediaStream | null;
+}) => {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+  const bubbleVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (bubbleVideoRef.current && camStream) {
+      bubbleVideoRef.current.srcObject = camStream;
+      bubbleVideoRef.current.play().catch(() => {});
+    }
+  }, [camStream]);
+
+  const handleMove = (clientX: number, clientY: number) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const bubbleW = rect.width * size;
+    const bubbleH = bubbleW * 9 / 16;
+    let x = (clientX - rect.left) / rect.width - size / 2;
+    let y = (clientY - rect.top) / rect.height - (bubbleH / rect.height) / 2;
+    x = Math.max(0, Math.min(1 - size, x));
+    y = Math.max(0, Math.min(1 - bubbleH / rect.height, y));
+    onPosChange({ x, y });
+  };
+
+  return (
+    <div className="space-y-3 pt-2 border-t border-border/50">
+      <Label className="text-sm">Bubble position {`(drag — works during recording too)`}</Label>
+      <div
+        ref={frameRef}
+        className="relative w-full aspect-video rounded-md bg-secondary border border-dashed border-border overflow-hidden select-none"
+        onPointerDown={(e) => {
+          draggingRef.current = true;
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+          handleMove(e.clientX, e.clientY);
+        }}
+        onPointerMove={(e) => {
+          if (draggingRef.current) handleMove(e.clientX, e.clientY);
+        }}
+        onPointerUp={() => { draggingRef.current = false; }}
+      >
+        <div className="absolute inset-0 flex items-center justify-center text-[10px] uppercase tracking-wider text-muted-foreground/60">
+          Screen preview
+        </div>
+        <div
+          className="absolute rounded-sm overflow-hidden ring-2 ring-primary shadow-lg pointer-events-none"
+          style={{
+            left: `${pos.x * 100}%`,
+            top: `${pos.y * 100}%`,
+            width: `${size * 100}%`,
+            aspectRatio: "16 / 9",
+          }}
+        >
+          {camStream ? (
+            <video ref={bubbleVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-primary/30" />
+          )}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label className="text-xs text-muted-foreground">Bubble size: {Math.round(size * 100)}% of screen width</Label>
+        <Slider value={[size * 100]} min={10} max={40} step={1} onValueChange={(v) => onSizeChange(v[0] / 100)} />
+      </div>
     </div>
   );
 };
