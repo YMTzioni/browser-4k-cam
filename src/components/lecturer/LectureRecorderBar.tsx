@@ -331,8 +331,8 @@ export const LectureRecorderBar = ({
       const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 6_000_000,
-        audioBitsPerSecond: 128_000,
+        videoBitsPerSecond: 25_000_000, // ~25 Mbps for 4K
+        audioBitsPerSecond: 192_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
