@@ -401,6 +401,15 @@ export const ScreenRecorder = () => {
             )}
           </div>
 
+          {camError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm space-y-2">
+              <p className="text-destructive-foreground/90">{camError}</p>
+              <Button size="sm" variant="secondary" onClick={retryCamera}>
+                Retry camera
+              </Button>
+            </div>
+          )}
+
           {/* Background controls */}
           <div className="space-y-3 pt-2 border-t border-border/50">
             <Label className="flex items-center gap-2 text-sm">
