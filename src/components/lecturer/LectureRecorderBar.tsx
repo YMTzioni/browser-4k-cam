@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, forwardRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Circle,
@@ -13,8 +16,14 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  Settings2,
+  Sparkles,
+  RectangleHorizontal,
+  Circle as CircleIcon,
 } from "lucide-react";
-import { useCameraStream } from "@/hooks/useCameraStream";
+import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
+
+export type CameraShape = "rounded" | "circle" | "rectangle";
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
