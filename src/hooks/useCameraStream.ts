@@ -23,6 +23,7 @@ interface Options {
   backgroundMode: BackgroundMode;
   backgroundImageUrl?: string | null;
   blurAmount?: number; // px
+  autoCenter?: boolean;
 }
 
 /**
