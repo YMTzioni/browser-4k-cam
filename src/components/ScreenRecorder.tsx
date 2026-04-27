@@ -151,7 +151,7 @@ export const ScreenRecorder = () => {
   };
 
   const openPip = async () => {
-    if (!camStream) {
+    if (!activeCamStream) {
       toast.error("Enable the camera first");
       return;
     }
@@ -170,7 +170,7 @@ export const ScreenRecorder = () => {
         v.style.width = "100%";
         v.style.height = "100%";
         v.style.objectFit = "cover";
-        v.srcObject = camStream;
+        v.srcObject = activeCamStream;
         pipWin.document.body.appendChild(v);
         pipWin.addEventListener("pagehide", () => {
           pipWindowRef.current = null;
@@ -208,6 +208,12 @@ export const ScreenRecorder = () => {
     try {
       const { w, h } = RES_MAP[resolution];
       const frameRate = Number(fps);
+      const cameraRecordStream = cameraMode !== "off" ? await ensureCameraStream() : null;
+
+      if (cameraMode !== "off" && !cameraRecordStream) {
+        toast.error(camError || "Camera not recognized");
+        return;
+      }
 
       let displayStream: MediaStream | null = null;
 
@@ -236,9 +242,9 @@ export const ScreenRecorder = () => {
 
       let recordStream: MediaStream;
 
-      if (cameraMode === "overlay" && displayStream && camStream) {
+      if (cameraMode === "overlay" && displayStream && cameraRecordStream) {
         const screenVideo = await playVideo(displayStream);
-        const camVideo = await playVideo(camStream);
+        const camVideo = await playVideo(cameraRecordStream);
 
         const screenTrack = displayStream.getVideoTracks()[0];
         const settings = screenTrack.getSettings();
@@ -271,8 +277,8 @@ export const ScreenRecorder = () => {
         micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
         recordStream = new MediaStream(tracks);
         compositeStreamRef.current = recordStream;
-      } else if (cameraMode === "only" && camStream) {
-        const tracks: MediaStreamTrack[] = [...camStream.getVideoTracks()];
+      } else if (cameraMode === "only" && cameraRecordStream) {
+        const tracks: MediaStreamTrack[] = [...cameraRecordStream.getVideoTracks()];
         micStreamRef.current?.getAudioTracks().forEach((t) => tracks.push(t));
         recordStream = new MediaStream(tracks);
       } else if (displayStream) {
@@ -305,7 +311,7 @@ export const ScreenRecorder = () => {
       };
 
       const primaryVideo =
-        displayStream?.getVideoTracks()[0] || camStream?.getVideoTracks()[0];
+        displayStream?.getVideoTracks()[0] || cameraRecordStream?.getVideoTracks()[0];
       primaryVideo?.addEventListener("ended", () => {
         if (recorder.state !== "inactive") recorder.stop();
         setRecording(false);
@@ -485,7 +491,7 @@ export const ScreenRecorder = () => {
               size={bubbleSize}
               onPosChange={setBubblePos}
               onSizeChange={setBubbleSize}
-              camStream={camStream}
+              camStream={activeCamStream}
             />
           )}
         </Card>
@@ -527,7 +533,7 @@ export const ScreenRecorder = () => {
             <Label className="flex items-center gap-2 text-sm">
               <Camera className="size-4" /> Camera
             </Label>
-            <Select value={cameraMode} onValueChange={(v) => setCameraMode(v as CameraMode)} disabled={recording}>
+            <Select value={cameraMode} onValueChange={handleCameraModeChange} disabled={recording}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="off">Off — screen only</SelectItem>
