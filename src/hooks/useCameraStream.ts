@@ -206,30 +206,34 @@ export const useCameraStream = ({
         const mctx = maskAnalyzer.getContext("2d", { willReadFrequently: true })!;
 
         const computePersonBox = (mask: CanvasImageSource) => {
-          mctx.clearRect(0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          mctx.drawImage(mask, 0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          const { data } = mctx.getImageData(0, 0, maskAnalyzer.width, maskAnalyzer.height);
-          let sumX = 0, sumY = 0, count = 0;
-          let minX = maskAnalyzer.width, maxX = 0, minY = maskAnalyzer.height, maxY = 0;
-          for (let y = 0; y < maskAnalyzer.height; y++) {
-            for (let x = 0; x < maskAnalyzer.width; x++) {
-              const i = (y * maskAnalyzer.width + x) * 4;
-              // MediaPipe mask: high alpha or high red = person.
+          const mw = maskAnalyzer.width;
+          const mh = maskAnalyzer.height;
+          mctx.clearRect(0, 0, mw, mh);
+          mctx.drawImage(mask, 0, 0, mw, mh);
+          const { data } = mctx.getImageData(0, 0, mw, mh);
+          let count = 0;
+          let minX = mw, maxX = 0, minY = mh, maxY = 0;
+          for (let y = 0; y < mh; y++) {
+            for (let x = 0; x < mw; x++) {
+              const i = (y * mw + x) * 4;
               const v = data[i] || data[i + 3];
               if (v > 128) {
-                sumX += x; sumY += y; count++;
+                count++;
                 if (x < minX) minX = x; if (x > maxX) maxX = x;
                 if (y < minY) minY = y; if (y > maxY) maxY = y;
               }
             }
           }
           if (count < 50) return null;
-          return {
-            cx: sumX / count / maskAnalyzer.width,
-            cy: sumY / count / maskAnalyzer.height,
-            bw: (maxX - minX) / maskAnalyzer.width,
-            bh: (maxY - minY) / maskAnalyzer.height,
-          };
+          // Use bounding box center horizontally; bias vertically toward the
+          // TOP of the box (head/face area) so the camera centers on the face,
+          // not the torso/centroid of the whole silhouette.
+          const bw = (maxX - minX) / mw;
+          const bh = (maxY - minY) / mh;
+          const cx = (minX + maxX) / 2 / mw;
+          // Face is roughly the top ~22% of the person box.
+          const cy = (minY / mh) + bh * 0.22;
+          return { cx, cy, bw, bh };
         };
 
         segmenter.onResults((results: Results) => {
