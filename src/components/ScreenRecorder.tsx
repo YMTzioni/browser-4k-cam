@@ -244,10 +244,12 @@ export const ScreenRecorder = () => {
       }
 
       let recordStream: MediaStream;
+      const useCompositor =
+        cameraMode === "overlay" || (annotateActive && !!displayStream && cameraMode !== "only");
 
-      if (cameraMode === "overlay" && displayStream && cameraRecordStream) {
+      if (useCompositor && displayStream) {
         const screenVideo = await playVideo(displayStream);
-        const camVideo = await playVideo(cameraRecordStream);
+        const camVideo = cameraRecordStream ? await playVideo(cameraRecordStream) : null;
 
         const screenTrack = displayStream.getVideoTracks()[0];
         const settings = screenTrack.getSettings();
@@ -261,15 +263,19 @@ export const ScreenRecorder = () => {
 
         const draw = () => {
           ctx.drawImage(screenVideo, 0, 0, canvasW, canvasH);
-          // Live bubble position from refs (updates in real time during recording)
-          const bw = Math.round(canvasW * bubbleSizeRef.current);
-          const bh = Math.round((bw * 9) / 16);
-          const bx = Math.round(canvasW * bubblePosRef.current.x);
-          const by = Math.round(canvasH * bubblePosRef.current.y);
-          // shadow border
-          ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.fillRect(bx - 4, by - 4, bw + 8, bh + 8);
-          ctx.drawImage(camVideo, bx, by, bw, bh);
+          if (camVideo && cameraMode === "overlay") {
+            const bw = Math.round(canvasW * bubbleSizeRef.current);
+            const bh = Math.round((bw * 9) / 16);
+            const bx = Math.round(canvasW * bubblePosRef.current.x);
+            const by = Math.round(canvasH * bubblePosRef.current.y);
+            ctx.fillStyle = "rgba(0,0,0,0.5)";
+            ctx.fillRect(bx - 4, by - 4, bw + 8, bh + 8);
+            ctx.drawImage(camVideo, bx, by, bw, bh);
+          }
+          const annCanvas = annotationRef.current?.getCanvas();
+          if (annotateActive && annCanvas && annCanvas.width > 0) {
+            ctx.drawImage(annCanvas, 0, 0, canvasW, canvasH);
+          }
           rafRef.current = requestAnimationFrame(draw);
         };
         draw();
