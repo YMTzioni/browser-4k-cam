@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, forwardRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import {
   Circle,
@@ -13,8 +16,14 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  Settings2,
+  Sparkles,
+  RectangleHorizontal,
+  Circle as CircleIcon,
 } from "lucide-react";
-import { useCameraStream } from "@/hooks/useCameraStream";
+import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
+
+export type CameraShape = "rounded" | "circle" | "rectangle";
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -75,6 +84,13 @@ export const LectureRecorderBar = ({
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [converting, setConverting] = useState(false);
 
+  // Camera appearance options
+  const [bgMode, setBgMode] = useState<BackgroundMode>("none");
+  const [blurAmount, setBlurAmount] = useState(12);
+  const [shape, setShape] = useState<CameraShape>("rounded");
+  const [bubbleWidth, setBubbleWidth] = useState(240);
+  const [mirror, setMirror] = useState(true);
+
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -84,9 +100,14 @@ export const LectureRecorderBar = ({
   const drawIntervalRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
+  const shapeRef = useRef<CameraShape>(shape);
+  const mirrorRef = useRef<boolean>(mirror);
+  useEffect(() => { shapeRef.current = shape; }, [shape]);
+  useEffect(() => { mirrorRef.current = mirror; }, [mirror]);
 
   const { rawStream, processedStream, error: camError, requestCamera, stopCamera } = useCameraStream({
-    backgroundMode: "none",
+    backgroundMode: bgMode,
+    blurAmount,
   });
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
@@ -195,17 +216,34 @@ export const LectureRecorderBar = ({
         const video = camPreviewRef.current;
         if (bubble && video && video.readyState >= 2) {
           const bRect = bubble.getBoundingClientRect();
-          // Only draw the part of the bubble that overlaps the stage
           const dx = (bRect.left - sRect.left) * dpr;
           const dy = (bRect.top - sRect.top) * dpr;
           const dw = bRect.width * dpr;
           const dh = bRect.height * dpr;
           cctx.save();
-          const radius = 12 * dpr;
-          roundRectPath(cctx, dx, dy, dw, dh, radius);
+          const sh = shapeRef.current;
+          if (sh === "circle") {
+            const cx = dx + dw / 2;
+            const cy = dy + dh / 2;
+            const r = Math.min(dw, dh) / 2;
+            cctx.beginPath();
+            cctx.arc(cx, cy, r, 0, Math.PI * 2);
+            cctx.closePath();
+          } else if (sh === "rectangle") {
+            cctx.beginPath();
+            cctx.rect(dx, dy, dw, dh);
+          } else {
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+          }
           cctx.clip();
           try {
-            cctx.drawImage(video, dx, dy, dw, dh);
+            if (mirrorRef.current) {
+              cctx.translate(dx + dw, dy);
+              cctx.scale(-1, 1);
+              cctx.drawImage(video, 0, 0, dw, dh);
+            } else {
+              cctx.drawImage(video, dx, dy, dw, dh);
+            }
           } catch {
             /* ignore */
           }
@@ -213,8 +251,19 @@ export const LectureRecorderBar = ({
           // Ring
           cctx.lineWidth = 2 * dpr;
           cctx.strokeStyle = "hsl(var(--primary))";
-          roundRectPath(cctx, dx, dy, dw, dh, radius);
-          cctx.stroke();
+          if (sh === "circle") {
+            const cx = dx + dw / 2;
+            const cy = dy + dh / 2;
+            const r = Math.min(dw, dh) / 2;
+            cctx.beginPath();
+            cctx.arc(cx, cy, r, 0, Math.PI * 2);
+            cctx.stroke();
+          } else if (sh === "rectangle") {
+            cctx.strokeRect(dx, dy, dw, dh);
+          } else {
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+            cctx.stroke();
+          }
         }
 
         
@@ -442,6 +491,113 @@ export const LectureRecorderBar = ({
             {showCamera ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
           </Button>
 
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={!showCamera}
+                title="Camera options"
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="end" className="w-72 p-4 space-y-4">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Background
+                </Label>
+                <div className="grid grid-cols-3 gap-1">
+                  <Button
+                    size="sm"
+                    variant={bgMode === "none" ? "default" : "outline"}
+                    onClick={() => setBgMode("none")}
+                  >
+                    None
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={bgMode === "blur" ? "default" : "outline"}
+                    onClick={() => setBgMode("blur")}
+                    className="gap-1"
+                  >
+                    <Sparkles className="size-3" /> Blur
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={mirror ? "default" : "outline"}
+                    onClick={() => setMirror((m) => !m)}
+                  >
+                    Mirror
+                  </Button>
+                </div>
+                {bgMode === "blur" && (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Blur strength</Label>
+                      <span className="text-xs text-muted-foreground tabular-nums">{blurAmount}px</span>
+                    </div>
+                    <Slider
+                      value={[blurAmount]}
+                      onValueChange={([v]) => setBlurAmount(v)}
+                      min={4}
+                      max={30}
+                      step={1}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Shape
+                </Label>
+                <div className="grid grid-cols-3 gap-1">
+                  <Button
+                    size="sm"
+                    variant={shape === "rounded" ? "default" : "outline"}
+                    onClick={() => setShape("rounded")}
+                    title="Rounded"
+                  >
+                    <Square className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={shape === "circle" ? "default" : "outline"}
+                    onClick={() => setShape("circle")}
+                    title="Circle"
+                  >
+                    <CircleIcon className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={shape === "rectangle" ? "default" : "outline"}
+                    onClick={() => setShape("rectangle")}
+                    title="Rectangle"
+                  >
+                    <RectangleHorizontal className="size-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Size
+                  </Label>
+                  <span className="text-xs text-muted-foreground tabular-nums">{bubbleWidth}px</span>
+                </div>
+                <Slider
+                  value={[bubbleWidth]}
+                  onValueChange={([v]) => setBubbleWidth(v)}
+                  min={140}
+                  max={520}
+                  step={10}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {previewUrl && !recording && (
             <>
               <div className="w-px h-6 bg-border mx-1" />
@@ -474,6 +630,10 @@ export const LectureRecorderBar = ({
           videoRef={camPreviewRef}
           hasStream={!!camStream}
           recording={recording}
+          shape={shape}
+          width={bubbleWidth}
+          onWidthChange={setBubbleWidth}
+          mirror={mirror}
         />
       )}
     </>
@@ -497,7 +657,7 @@ const roundRectPath = (
   ctx.closePath();
 };
 
-import { forwardRef } from "react";
+
 
 const DraggableCameraBubble = forwardRef<
   HTMLDivElement,
@@ -505,15 +665,22 @@ const DraggableCameraBubble = forwardRef<
     videoRef: React.MutableRefObject<HTMLVideoElement | null>;
     hasStream: boolean;
     recording: boolean;
+    shape: CameraShape;
+    width: number;
+    onWidthChange: (w: number) => void;
+    mirror: boolean;
   }
->(({ videoRef, hasStream, recording }, ref) => {
+>(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror }, ref) => {
   const [pos, setPos] = useState(() => ({
     x: window.innerWidth - 280,
     y: window.innerHeight - 240,
   }));
-  const [width, setWidth] = useState(240);
   const draggingRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizingRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  // Aspect ratio per shape — circle is 1:1, others 16:9.
+  const aspect = shape === "circle" ? 1 : 16 / 9;
+  const height = width / aspect;
 
   const onPointerDown = (e: React.PointerEvent) => {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -523,15 +690,14 @@ const DraggableCameraBubble = forwardRef<
     if (resizingRef.current) {
       const r = resizingRef.current;
       const next = Math.max(140, Math.min(520, r.startW + (e.clientX - r.startX)));
-      setWidth(next);
+      onWidthChange(next);
       return;
     }
     if (!draggingRef.current) return;
     const d = draggingRef.current;
-    const h = (width * 9) / 16;
     setPos({
       x: Math.max(0, Math.min(window.innerWidth - width, e.clientX - d.dx)),
-      y: Math.max(0, Math.min(window.innerHeight - h, e.clientY - d.dy)),
+      y: Math.max(0, Math.min(window.innerHeight - height, e.clientY - d.dy)),
     });
   };
   const onPointerUp = () => {
@@ -545,6 +711,9 @@ const DraggableCameraBubble = forwardRef<
     resizingRef.current = { startX: e.clientX, startW: width };
   };
 
+  const shapeClass =
+    shape === "circle" ? "rounded-full" : shape === "rectangle" ? "rounded-none" : "rounded-xl";
+
   return (
     <div
       ref={ref}
@@ -552,8 +721,8 @@ const DraggableCameraBubble = forwardRef<
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className="fixed z-50 rounded-xl overflow-hidden shadow-2xl ring-2 ring-primary cursor-grab active:cursor-grabbing select-none"
-      style={{ left: pos.x, top: pos.y, width, aspectRatio: "16 / 9" }}
+      className={`fixed z-50 overflow-hidden shadow-2xl ring-2 ring-primary cursor-grab active:cursor-grabbing select-none ${shapeClass}`}
+      style={{ left: pos.x, top: pos.y, width, height }}
     >
       {hasStream ? (
         <video
@@ -562,6 +731,7 @@ const DraggableCameraBubble = forwardRef<
           muted
           playsInline
           className="w-full h-full object-cover bg-black pointer-events-none"
+          style={mirror ? { transform: "scaleX(-1)" } : undefined}
         />
       ) : (
         <div className="w-full h-full grid place-items-center bg-black/80 text-xs text-muted-foreground">
