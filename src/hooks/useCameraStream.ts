@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Results, SelfieSegmentation as SelfieSegmentationType } from "@mediapipe/selfie_segmentation";
+import type { FaceDetection as FaceDetectionType, Results as FaceResults } from "@mediapipe/face_detection";
 
 // MediaPipe ships a UMD bundle that attaches to `window` and doesn't expose
 // a proper ES module export under Vite. Load it dynamically and pull the
@@ -15,6 +16,19 @@ const loadSelfieSegmentation = async (): Promise<new (cfg: { locateFile: (f: str
     throw new Error("MediaPipe SelfieSegmentation failed to load.");
   }
   return Ctor as new (cfg: { locateFile: (f: string) => string }) => SelfieSegmentationType;
+};
+
+const loadFaceDetection = async (): Promise<new (cfg: { locateFile: (f: string) => string }) => FaceDetectionType> => {
+  const mod: Record<string, unknown> = await import("@mediapipe/face_detection");
+  const w = window as unknown as Record<string, unknown>;
+  const Ctor =
+    (mod.FaceDetection as unknown) ||
+    ((mod.default as Record<string, unknown> | undefined)?.FaceDetection as unknown) ||
+    (w.FaceDetection as unknown);
+  if (typeof Ctor !== "function") {
+    throw new Error("MediaPipe FaceDetection failed to load.");
+  }
+  return Ctor as new (cfg: { locateFile: (f: string) => string }) => FaceDetectionType;
 };
 
 export type BackgroundMode = "none" | "blur" | "image";
