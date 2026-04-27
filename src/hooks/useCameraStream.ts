@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SelfieSegmentation, Results } from "@mediapipe/selfie_segmentation";
+import type { Results, SelfieSegmentation as SelfieSegmentationType } from "@mediapipe/selfie_segmentation";
+
+// MediaPipe ships a UMD bundle that attaches to `window` and doesn't expose
+// a proper ES module export under Vite. Load it dynamically and pull the
+// constructor off the module/global to avoid "SelfieSegmentation is not a constructor".
+const loadSelfieSegmentation = async (): Promise<new (cfg: { locateFile: (f: string) => string }) => SelfieSegmentationType> => {
+  const mod: Record<string, unknown> = await import("@mediapipe/selfie_segmentation");
+  const w = window as unknown as Record<string, unknown>;
+  const Ctor =
+    (mod.SelfieSegmentation as unknown) ||
+    ((mod.default as Record<string, unknown> | undefined)?.SelfieSegmentation as unknown) ||
+    (w.SelfieSegmentation as unknown);
+  if (typeof Ctor !== "function") {
+    throw new Error("MediaPipe SelfieSegmentation failed to load.");
+  }
+  return Ctor as new (cfg: { locateFile: (f: string) => string }) => SelfieSegmentationType;
+};
 
 export type BackgroundMode = "none" | "blur" | "image";
 
