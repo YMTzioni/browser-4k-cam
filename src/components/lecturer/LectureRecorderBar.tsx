@@ -91,6 +91,7 @@ export const LectureRecorderBar = ({
   const [shape, setShape] = useState<CameraShape>("rounded");
   const [bubbleWidth, setBubbleWidth] = useState(240);
   const [mirror, setMirror] = useState(true);
+  const [autoCenter, setAutoCenter] = useState(true);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
