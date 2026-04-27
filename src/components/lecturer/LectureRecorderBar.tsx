@@ -506,7 +506,7 @@ const roundRectPath = (
   ctx.closePath();
 };
 
-import { forwardRef } from "react";
+
 
 const DraggableCameraBubble = forwardRef<
   HTMLDivElement,
