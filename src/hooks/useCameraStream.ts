@@ -83,6 +83,25 @@ export const useCameraStream = ({
 
     (async () => {
       try {
+        // Proactively check permission state when supported
+        try {
+          // @ts-expect-error - "camera" not in PermissionName typings everywhere
+          const status = await navigator.permissions?.query({ name: "camera" });
+          if (status?.state === "denied") {
+            setError(
+              "Camera blocked. Click the camera icon in your browser's address bar and allow access, then try again."
+            );
+            return;
+          }
+        } catch {
+          /* permissions API unavailable — continue */
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setError("Camera API unavailable. Use a modern browser over HTTPS.");
+          return;
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
         });
