@@ -321,15 +321,17 @@ export const LectureRecorderBar = ({
       ];
       const stream = new MediaStream(tracks);
 
+      const mimeType = pickMimeType();
       const recorder = new MediaRecorder(stream, {
-        mimeType: pickMimeType(),
+        mimeType,
         videoBitsPerSecond: 6_000_000,
         audioBitsPerSecond: 128_000,
       });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
+        const containerType = mimeType.startsWith("video/mp4") ? "video/mp4" : "video/webm";
+        const blob = new Blob(chunksRef.current, { type: containerType });
         setPreviewBlob(blob);
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
