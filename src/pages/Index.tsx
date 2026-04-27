@@ -1,3 +1,6 @@
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Presentation } from "lucide-react";
 import { ScreenRecorder } from "@/components/ScreenRecorder";
 
 const Index = () => {
@@ -14,6 +17,11 @@ const Index = () => {
         <p className="text-lg text-muted-foreground">
           Capture your screen in stunning ultra-high definition with crystal-clear audio — right from your browser.
         </p>
+        <div className="mt-6">
+          <Button asChild variant="secondary" className="gap-2">
+            <Link to="/lecturer"><Presentation className="size-4" /> Open Lecturer Workspace</Link>
+          </Button>
+        </div>
       </header>
 
       <ScreenRecorder />
