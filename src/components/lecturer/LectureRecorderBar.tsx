@@ -349,8 +349,9 @@ export const LectureRecorderBar = ({
         "-movflags", "+faststart",
         "out.mp4",
       ]);
-      const data = await ffmpeg.readFile("out.mp4");
-      const mp4Blob = new Blob([data as Uint8Array], { type: "video/mp4" });
+      const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
+      const buf = new Uint8Array(data).buffer;
+      const mp4Blob = new Blob([buf], { type: "video/mp4" });
       const url = URL.createObjectURL(mp4Blob);
       triggerDownload(url, "mp4");
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
