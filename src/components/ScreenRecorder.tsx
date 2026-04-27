@@ -51,8 +51,17 @@ export const ScreenRecorder = () => {
   });
 
   useEffect(() => {
-    if (camError) toast.error(camError);
+    if (camError) {
+      toast.error(camError, { duration: 6000 });
+    }
   }, [camError]);
+
+  const retryCamera = () => {
+    // Toggling off then back on re-runs the camera hook
+    const prev = cameraMode;
+    setCameraMode("off");
+    setTimeout(() => setCameraMode(prev === "off" ? "overlay" : prev), 100);
+  };
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -391,6 +400,15 @@ export const ScreenRecorder = () => {
               </div>
             )}
           </div>
+
+          {camError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm space-y-2">
+              <p className="text-destructive-foreground/90">{camError}</p>
+              <Button size="sm" variant="secondary" onClick={retryCamera}>
+                Retry camera
+              </Button>
+            </div>
+          )}
 
           {/* Background controls */}
           <div className="space-y-3 pt-2 border-t border-border/50">
