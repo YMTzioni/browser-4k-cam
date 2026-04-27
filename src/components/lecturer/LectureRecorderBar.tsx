@@ -176,27 +176,25 @@ export const LectureRecorderBar = ({
       return;
     }
     try {
-      // Composer canvas sized to the stage (in device pixels for sharpness).
-      const dpr = window.devicePixelRatio || 1;
+      // Composer canvas sized for 4K output (preserves stage aspect ratio).
       const stageRect = stage.getBoundingClientRect();
+      const stageAspect = stageRect.width / stageRect.height;
+      const outW = TARGET_OUTPUT_WIDTH;
+      const outH = Math.round(outW / stageAspect / 2) * 2; // even number for H.264
       const composer = document.createElement("canvas");
-      composer.width = Math.round(stageRect.width * dpr);
-      composer.height = Math.round(stageRect.height * dpr);
+      composer.width = outW;
+      composer.height = outH;
       composerCanvasRef.current = composer;
-      const cctx = composer.getContext("2d")!;
+      const cctx = composer.getContext("2d", { alpha: false })!;
+      cctx.imageSmoothingEnabled = true;
+      cctx.imageSmoothingQuality = "high";
 
       const drawFrame = () => {
         const stageEl = stageRef.current;
         if (!stageEl) return;
         const sRect = stageEl.getBoundingClientRect();
-        // Resize composer if stage changed
-        if (
-          composer.width !== Math.round(sRect.width * dpr) ||
-          composer.height !== Math.round(sRect.height * dpr)
-        ) {
-          composer.width = Math.round(sRect.width * dpr);
-          composer.height = Math.round(sRect.height * dpr);
-        }
+        // Scale factor from CSS px (stage) → composer (4K) px.
+        const dpr = composer.width / sRect.width;
 
         // Background
         cctx.fillStyle = "#000";
