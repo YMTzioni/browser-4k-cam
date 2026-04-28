@@ -231,7 +231,7 @@ const Lecturer = () => {
         onClose={() => setAnnotateActive(false)}
       />
 
-      <LectureRecorderBar
+      {pdf && <LectureRecorderBar
         showCamera={showCamera}
         onToggleCamera={() => setShowCamera((s) => !s)}
         pdfCanvasRef={canvasRef}
