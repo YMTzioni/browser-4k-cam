@@ -241,7 +241,7 @@ const Lecturer = () => {
         totalPages={pdf?.numPages ?? 0}
         onPrevPage={() => setPage((p) => Math.max(1, p - 1))}
         onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
-      />
+      />}
     </main>
   );
 };
