@@ -86,6 +86,7 @@ export const LectureRecorderBar = ({
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [previewMime, setPreviewMime] = useState<string>("");
   const [converting, setConverting] = useState(false);
   const [convertProgress, setConvertProgress] = useState(0); // 0..1
   const [convertElapsed, setConvertElapsed] = useState(0); // seconds
