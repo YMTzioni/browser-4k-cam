@@ -412,14 +412,6 @@ export const LectureRecorderBar = ({
 
   const downloadMp4 = async () => {
     if (!previewBlob) return;
-    setConverting(true);
-    setConvertProgress(0);
-    setConvertElapsed(0);
-    setConvertStage("Preparing MP4 export…");
-    const startedAt = Date.now();
-    if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
-  const downloadMp4 = async () => {
-    if (!previewBlob) return;
 
     // Fast path: source is already an MP4 container — just rename & download.
     // No FFmpeg, no re-encode. Takes milliseconds.
