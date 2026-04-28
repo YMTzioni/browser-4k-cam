@@ -5,6 +5,8 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // GitHub Pages serves this repo under /browser-4k-cam/
+  base: mode === "production" ? "/browser-4k-cam/" : "/",
   server: {
     host: "::",
     port: 8080,
