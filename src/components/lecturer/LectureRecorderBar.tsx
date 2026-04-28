@@ -349,6 +349,7 @@ export const LectureRecorderBar = ({
         const containerType = mimeType.startsWith("video/mp4") ? "video/mp4" : "video/webm";
         const blob = new Blob(chunksRef.current, { type: containerType });
         setPreviewBlob(blob);
+        setPreviewMime(mimeType);
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
       };
