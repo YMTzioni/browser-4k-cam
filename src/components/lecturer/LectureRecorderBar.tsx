@@ -645,6 +645,7 @@ export const LectureRecorderBar = ({
                 variant="ghost"
                 disabled={!showCamera}
                 title="Camera options"
+                className="text-classroom-surface-foreground hover:bg-classroom-muted"
               >
                 <Settings2 className="size-4" />
               </Button>
