@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  ArrowLeft,
   FileUp,
   Maximize2,
   Pencil,
@@ -140,10 +138,6 @@ const Lecturer = () => {
       {/* Top bar — Classroom-style */}
       <header className="flex items-center justify-between px-6 py-3 bg-classroom-surface border-b border-classroom-border shadow-[var(--shadow-classroom)] sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm" className="text-classroom-muted-foreground hover:bg-classroom-muted">
-            <Link to="/"><ArrowLeft className="size-4 mr-1" /> Recorder</Link>
-          </Button>
-          <div className="w-px h-6 bg-classroom-border" />
           <div className="flex items-center gap-2.5">
             <div className="size-9 rounded-lg bg-[image:var(--gradient-classroom)] grid place-items-center shadow-[var(--shadow-classroom)]">
               <GraduationCap className="size-5 text-classroom-foreground" />
