@@ -532,7 +532,7 @@ export const LectureRecorderBar = ({
   return (
     <>
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-card/95 backdrop-blur border border-border shadow-xl">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-classroom-surface border border-classroom-border shadow-[var(--shadow-classroom-lg)]">
           {/* Slide navigation */}
           <Button
             size="icon"
@@ -540,10 +540,11 @@ export const LectureRecorderBar = ({
             onClick={onPrevPage}
             disabled={page <= 1 || totalPages === 0}
             title="Previous slide"
+            className="text-classroom-surface-foreground hover:bg-classroom-muted"
           >
             <ChevronLeft className="size-4" />
           </Button>
-          <span className="text-sm font-mono tabular-nums px-1 min-w-[60px] text-center">
+          <span className="text-sm font-mono tabular-nums px-1 min-w-[60px] text-center text-classroom-surface-foreground">
             {totalPages > 0 ? `${page} / ${totalPages}` : "—"}
           </span>
           <Button
@@ -552,19 +553,28 @@ export const LectureRecorderBar = ({
             onClick={onNextPage}
             disabled={page >= totalPages || totalPages === 0}
             title="Next slide"
+            className="text-classroom-surface-foreground hover:bg-classroom-muted"
           >
             <ChevronRight className="size-4" />
           </Button>
 
-          <div className="w-px h-6 bg-border mx-1" />
+          <div className="w-px h-6 bg-classroom-border mx-1" />
 
           {!recording ? (
-            <Button onClick={start} size="sm" className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground">
+            <Button
+              onClick={start}
+              size="sm"
+              className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
+            >
               <Circle className="size-4" fill="currentColor" /> Record
             </Button>
           ) : (
             <>
-              <Button onClick={togglePause} size="sm" variant="secondary" className="gap-2">
+              <Button
+                onClick={togglePause}
+                size="sm"
+                className="gap-2 bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
+              >
                 {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
                 {paused ? "Resume" : "Pause"}
               </Button>
@@ -574,44 +584,56 @@ export const LectureRecorderBar = ({
             </>
           )}
 
-          <div className="w-px h-6 bg-border mx-1" />
+          <div className="w-px h-6 bg-classroom-border mx-1" />
 
-          <span className="font-mono text-sm tabular-nums w-14 text-center">
+          <span className="font-mono text-sm tabular-nums w-14 text-center text-classroom-surface-foreground">
             {formatTime(elapsed)}
           </span>
           {recording && (
-            <span className="flex items-center gap-1.5 text-xs text-destructive">
+            <span className="flex items-center gap-1.5 text-xs text-destructive font-semibold">
               <span className={`size-2 rounded-full bg-destructive ${paused ? "" : "animate-pulse"}`} />
               {paused ? "PAUSED" : "REC"}
             </span>
           )}
 
-          <div className="w-px h-6 bg-border mx-1" />
+          <div className="w-px h-6 bg-classroom-border mx-1" />
 
           <Button
             size="icon"
-            variant={withMic ? "default" : "secondary"}
             onClick={() => setWithMic((m) => !m)}
             disabled={recording}
             title="Microphone"
+            className={
+              withMic
+                ? "bg-classroom-secondary hover:bg-classroom-secondary/90 text-classroom-foreground"
+                : "bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
+            }
           >
             {withMic ? <Mic className="size-4" /> : <MicOff className="size-4" />}
           </Button>
           <MicTestButton disabled={recording} />
           <Button
             size="icon"
-            variant={showCamera ? "default" : "secondary"}
             onClick={onToggleCamera}
             title="Camera bubble"
+            className={
+              showCamera
+                ? "bg-classroom-secondary hover:bg-classroom-secondary/90 text-classroom-foreground"
+                : "bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
+            }
           >
             {showCamera ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
           </Button>
           <Button
             size="icon"
-            variant={autoCenter ? "default" : "secondary"}
             onClick={() => setAutoCenter((v) => !v)}
             disabled={!showCamera}
             title={autoCenter ? "Auto-center: ON" : "Auto-center: OFF"}
+            className={
+              autoCenter
+                ? "bg-classroom hover:bg-classroom/90 text-classroom-foreground"
+                : "bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
+            }
           >
             <Focus className="size-4" />
           </Button>
@@ -623,6 +645,7 @@ export const LectureRecorderBar = ({
                 variant="ghost"
                 disabled={!showCamera}
                 title="Camera options"
+                className="text-classroom-surface-foreground hover:bg-classroom-muted"
               >
                 <Settings2 className="size-4" />
               </Button>
@@ -725,23 +748,22 @@ export const LectureRecorderBar = ({
 
           {previewUrl && !recording && (
             <>
-              <div className="w-px h-6 bg-border mx-1" />
+              <div className="w-px h-6 bg-classroom-border mx-1" />
               <Button
                 size="sm"
                 onClick={downloadMp4}
                 disabled={converting}
-                className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
-                title="Export as 4K MP4 (re-encoded for compatibility & audio)"
+                className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
+                title="Export as MP4"
               >
                 <Download className="size-4" />
-                {converting ? `${Math.round(convertProgress * 100)}%` : "4K MP4"}
+                {converting ? `${Math.round(convertProgress * 100)}%` : "MP4"}
               </Button>
               <Button
                 size="sm"
-                variant="secondary"
                 onClick={downloadWebm}
                 disabled={converting}
-                className="gap-2"
+                className="gap-2 bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
                 title="Download original WebM (no re-encode, fastest)"
               >
                 <Download className="size-4" /> WebM
@@ -752,20 +774,20 @@ export const LectureRecorderBar = ({
 
         {/* Conversion progress panel */}
         {converting && (
-          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-card/95 backdrop-blur border border-border shadow-xl p-3 space-y-2">
+          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-classroom-surface border border-classroom-border shadow-[var(--shadow-classroom-lg)] p-3 space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold">{convertStage || "Working…"}</span>
-              <span className="font-mono tabular-nums text-muted-foreground">
+              <span className="font-semibold text-classroom-surface-foreground">{convertStage || "Working…"}</span>
+              <span className="font-mono tabular-nums text-classroom-muted-foreground">
                 {Math.round(convertProgress * 100)}%
               </span>
             </div>
-            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+            <div className="h-2 w-full rounded-full bg-classroom-muted overflow-hidden">
               <div
-                className="h-full bg-[image:var(--gradient-primary)] transition-[width] duration-300"
+                className="h-full bg-classroom transition-[width] duration-300"
                 style={{ width: `${Math.max(2, convertProgress * 100)}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono tabular-nums">
+            <div className="flex items-center justify-between text-[11px] text-classroom-muted-foreground font-mono tabular-nums">
               <span>Elapsed: {formatTime(convertElapsed)}</span>
               <span>ETA: {formatEta(convertEta)}</span>
             </div>
