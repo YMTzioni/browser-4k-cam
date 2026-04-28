@@ -272,4 +272,32 @@ const Lecturer = () => {
   );
 };
 
+const ClassroomStat = ({
+  icon,
+  label,
+  value,
+  tint,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  tint: "green" | "blue" | "amber";
+}) => {
+  const tintClass =
+    tint === "green"
+      ? "bg-classroom/10 text-classroom"
+      : tint === "blue"
+      ? "bg-classroom-secondary/10 text-classroom-secondary"
+      : "bg-amber-100 text-amber-600";
+  return (
+    <div className="bg-classroom-surface border border-classroom-border rounded-xl p-4 flex items-center gap-3 shadow-[var(--shadow-classroom)] hover:shadow-[var(--shadow-classroom-lg)] transition-shadow">
+      <div className={`size-10 rounded-lg grid place-items-center ${tintClass}`}>{icon}</div>
+      <div className="leading-tight">
+        <div className="text-xs text-classroom-muted-foreground">{label}</div>
+        <div className="text-base font-semibold text-classroom-surface-foreground">{value}</div>
+      </div>
+    </div>
+  );
+};
+
 export default Lecturer;
