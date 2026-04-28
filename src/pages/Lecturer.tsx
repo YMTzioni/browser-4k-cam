@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  ArrowLeft,
   FileUp,
   Maximize2,
   Pencil,
