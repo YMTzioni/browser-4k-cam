@@ -650,7 +650,7 @@ export const LectureRecorderBar = ({
                 <Settings2 className="size-4" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent side="top" align="end" className="w-72 p-4 space-y-4">
+            <PopoverContent side="top" align="end" className="classroom-theme w-72 p-4 space-y-4">
               <div className="space-y-2">
                 <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Background
@@ -1021,7 +1021,7 @@ const MicTestButton = ({ disabled }: { disabled?: boolean }) => {
           <Volume2 className="size-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-72 p-4 space-y-3">
+      <PopoverContent side="top" align="end" className="classroom-theme w-72 p-4 space-y-3">
         <div className="space-y-1">
           <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Microphone test
