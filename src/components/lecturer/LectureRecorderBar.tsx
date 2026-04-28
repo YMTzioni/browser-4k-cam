@@ -1,7 +1,4 @@
 import { useEffect, useRef, useState, forwardRef } from "react";
-import ffmpegCoreUrl from "@ffmpeg/core?url";
-import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
-import ffmpegWorkerUrl from "@ffmpeg/ffmpeg/worker?url";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
@@ -86,13 +83,6 @@ export const LectureRecorderBar = ({
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
-  const [previewMime, setPreviewMime] = useState<string>("");
-  const [converting, setConverting] = useState(false);
-  const [convertProgress, setConvertProgress] = useState(0); // 0..1
-  const [convertElapsed, setConvertElapsed] = useState(0); // seconds
-  const [convertStage, setConvertStage] = useState<string>("");
-  const convertTimerRef = useRef<number | null>(null);
 
   // Camera appearance options
   const [bgMode, setBgMode] = useState<BackgroundMode>("none");
@@ -151,27 +141,17 @@ export const LectureRecorderBar = ({
     micStreamRef.current = null;
   };
 
-  // PREFER H.264 inside the recording container. When the source video is
-  // already H.264, the MP4 export can use `-c:v copy` (a fast remux that takes
-  // seconds instead of minutes) instead of re-encoding through libx264 in WASM.
-  // Order: H.264 in WebM → H.264 in MP4 → VP9 → VP8 fallbacks.
+  // Keep recording output in WebM only.
   const pickMimeType = () => {
     const candidates = [
       "video/webm;codecs=h264,opus",
       "video/webm;codecs=avc1,opus",
-      "video/mp4;codecs=h264,aac",
-      "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
-      "video/mp4",
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
       "video/webm",
     ];
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
-
-  // True when the recorded blob is already H.264 (we can stream-copy video).
-  const isH264Container = (mime: string) =>
-    /h264|avc1/i.test(mime);
 
   // Target output resolution: up to 4K (3840 wide), preserving stage aspect.
   const TARGET_OUTPUT_WIDTH = 3840;
@@ -347,10 +327,7 @@ export const LectureRecorderBar = ({
       chunksRef.current = [];
       recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
       recorder.onstop = () => {
-        const containerType = mimeType.startsWith("video/mp4") ? "video/mp4" : "video/webm";
-        const blob = new Blob(chunksRef.current, { type: containerType });
-        setPreviewBlob(blob);
-        setPreviewMime(mimeType);
+        const blob = new Blob(chunksRef.current, { type: "video/webm" });
         setPreviewUrl(URL.createObjectURL(blob));
         cleanup();
       };
@@ -403,132 +380,6 @@ export const LectureRecorderBar = ({
   const downloadWebm = () => {
     if (previewUrl) triggerDownload(previewUrl, "webm");
   };
-
-  const formatEta = (s: number) => {
-    if (!isFinite(s) || s <= 0) return "—";
-    const m = Math.floor(s / 60);
-    const sec = Math.round(s % 60);
-    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
-  };
-
-  const downloadMp4 = async () => {
-    if (!previewBlob) return;
-
-    // Fast path: source is already an MP4 container — just rename & download.
-    // No FFmpeg, no re-encode. Takes milliseconds.
-    if (previewMime.startsWith("video/mp4") || previewBlob.type === "video/mp4") {
-      const url = URL.createObjectURL(new Blob([previewBlob], { type: "video/mp4" }));
-      triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      toast.success("MP4 ready (instant export)");
-      return;
-    }
-
-    setConverting(true);
-    setConvertProgress(0);
-    setConvertElapsed(0);
-    const sourceIsH264 = isH264Container(previewMime);
-    setConvertStage(sourceIsH264 ? "Preparing fast remux…" : "Preparing MP4 export…");
-    const startedAt = Date.now();
-    if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
-    convertTimerRef.current = window.setInterval(() => {
-      setConvertElapsed(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-
-    try {
-      setConvertProgress(0.04);
-      setConvertStage("Loading encoder modules…");
-      const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-      const { fetchFile } = await import("@ffmpeg/util");
-
-      setConvertProgress(0.1);
-      setConvertStage("Starting video encoder…");
-      const ffmpeg = new FFmpeg();
-      await ffmpeg.load({
-        coreURL: ffmpegCoreUrl,
-        wasmURL: ffmpegWasmUrl,
-        classWorkerURL: ffmpegWorkerUrl,
-      });
-      setConvertProgress(0.2);
-
-      ffmpeg.on("progress", ({ progress }) => {
-        if (typeof progress === "number" && progress >= 0) {
-          setConvertProgress(Math.min(0.96, 0.4 + progress * 0.56));
-          setConvertStage(sourceIsH264 ? "Remuxing to MP4…" : "Encoding 4K MP4…");
-        }
-      });
-
-      const inputName = previewBlob.type.includes("mp4") ? "in.mp4" : "in.webm";
-      setConvertStage("Preparing source media…");
-      setConvertProgress(0.26);
-      await ffmpeg.writeFile(inputName, await fetchFile(previewBlob));
-
-      setConvertProgress(0.38);
-
-      // Build args. When the source is already H.264 we stream-copy the video
-      // (orders of magnitude faster than libx264 in WASM) and only transcode
-      // audio to AAC. Otherwise we re-encode at 4K with a fast preset.
-      const args = sourceIsH264
-        ? [
-            "-i", inputName,
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
-            "-movflags", "+faststart",
-            "out.mp4",
-          ]
-        : [
-            "-i", inputName,
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
-            "-tune", "zerolatency",
-            "-pix_fmt", "yuv420p",
-            "-threads", "0",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
-            "-movflags", "+faststart",
-            "out.mp4",
-          ];
-
-      setConvertStage(sourceIsH264 ? "Remuxing to MP4…" : "Encoding 4K MP4…");
-      const exitCode = await ffmpeg.exec(args);
-      if (exitCode !== 0) throw new Error(`FFmpeg exited with code ${exitCode}`);
-
-      setConvertStage("Finalizing…");
-      setConvertProgress(0.98);
-      const data = (await ffmpeg.readFile("out.mp4")) as Uint8Array;
-      const buf = new Uint8Array(data).buffer;
-      const mp4Blob = new Blob([buf], { type: "video/mp4" });
-      const url = URL.createObjectURL(mp4Blob);
-      triggerDownload(url, "mp4");
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      setConvertProgress(1);
-      setConvertStage("Done");
-      const total = Math.floor((Date.now() - startedAt) / 1000);
-      toast.success(
-        sourceIsH264
-          ? `MP4 ready in ${formatEta(total)} (fast remux)`
-          : `MP4 ready in ${formatEta(total)}`
-      );
-    } catch (err) {
-      console.error(err);
-      toast.error("MP4 conversion failed — downloading WebM instead");
-      downloadWebm();
-    } finally {
-      if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
-      convertTimerRef.current = null;
-      setConverting(false);
-    }
-  };
-
-  // Estimate remaining time from progress + elapsed.
-  const convertEta =
-    convertProgress > 0.02 && convertProgress < 1
-      ? Math.max(0, convertElapsed / convertProgress - convertElapsed)
-      : 0;
 
 
   return (
@@ -753,48 +604,15 @@ export const LectureRecorderBar = ({
               <div className="w-px h-6 bg-classroom-border mx-1" />
               <Button
                 size="sm"
-                onClick={downloadMp4}
-                disabled={converting}
-                className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
-                title="Export as MP4"
-              >
-                <Download className="size-4" />
-                {converting ? `${Math.round(convertProgress * 100)}%` : "MP4"}
-              </Button>
-              <Button
-                size="sm"
                 onClick={downloadWebm}
-                disabled={converting}
-                className="gap-2 bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
-                title="Download original WebM (no re-encode, fastest)"
+                className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
+                title="Download recording as WebM"
               >
                 <Download className="size-4" /> WebM
               </Button>
             </>
           )}
         </div>
-
-        {/* Conversion progress panel */}
-        {converting && (
-          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-classroom-surface border border-classroom-border shadow-[var(--shadow-classroom-lg)] p-3 space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-classroom-surface-foreground">{convertStage || "Working…"}</span>
-              <span className="font-mono tabular-nums text-classroom-muted-foreground">
-                {Math.round(convertProgress * 100)}%
-              </span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-classroom-muted overflow-hidden">
-              <div
-                className="h-full bg-classroom transition-[width] duration-300"
-                style={{ width: `${Math.max(2, convertProgress * 100)}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[11px] text-classroom-muted-foreground font-mono tabular-nums">
-              <span>Elapsed: {formatTime(convertElapsed)}</span>
-              <span>ETA: {formatEta(convertEta)}</span>
-            </div>
-          </div>
-        )}
       </div>
 
       {showCamera && (
