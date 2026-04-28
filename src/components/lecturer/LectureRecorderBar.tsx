@@ -748,23 +748,22 @@ export const LectureRecorderBar = ({
 
           {previewUrl && !recording && (
             <>
-              <div className="w-px h-6 bg-border mx-1" />
+              <div className="w-px h-6 bg-classroom-border mx-1" />
               <Button
                 size="sm"
                 onClick={downloadMp4}
                 disabled={converting}
-                className="gap-2 bg-[image:var(--gradient-primary)] text-primary-foreground"
-                title="Export as 4K MP4 (re-encoded for compatibility & audio)"
+                className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
+                title="Export as MP4"
               >
                 <Download className="size-4" />
-                {converting ? `${Math.round(convertProgress * 100)}%` : "4K MP4"}
+                {converting ? `${Math.round(convertProgress * 100)}%` : "MP4"}
               </Button>
               <Button
                 size="sm"
-                variant="secondary"
                 onClick={downloadWebm}
                 disabled={converting}
-                className="gap-2"
+                className="gap-2 bg-classroom-muted hover:bg-classroom-muted/70 text-classroom-surface-foreground border border-classroom-border"
                 title="Download original WebM (no re-encode, fastest)"
               >
                 <Download className="size-4" /> WebM
@@ -775,20 +774,20 @@ export const LectureRecorderBar = ({
 
         {/* Conversion progress panel */}
         {converting && (
-          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-card/95 backdrop-blur border border-border shadow-xl p-3 space-y-2">
+          <div className="mt-2 mx-auto w-[420px] max-w-[92vw] rounded-xl bg-classroom-surface border border-classroom-border shadow-[var(--shadow-classroom-lg)] p-3 space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold">{convertStage || "Working…"}</span>
-              <span className="font-mono tabular-nums text-muted-foreground">
+              <span className="font-semibold text-classroom-surface-foreground">{convertStage || "Working…"}</span>
+              <span className="font-mono tabular-nums text-classroom-muted-foreground">
                 {Math.round(convertProgress * 100)}%
               </span>
             </div>
-            <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+            <div className="h-2 w-full rounded-full bg-classroom-muted overflow-hidden">
               <div
-                className="h-full bg-[image:var(--gradient-primary)] transition-[width] duration-300"
+                className="h-full bg-classroom transition-[width] duration-300"
                 style={{ width: `${Math.max(2, convertProgress * 100)}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono tabular-nums">
+            <div className="flex items-center justify-between text-[11px] text-classroom-muted-foreground font-mono tabular-nums">
               <span>Elapsed: {formatTime(convertElapsed)}</span>
               <span>ETA: {formatEta(convertEta)}</span>
             </div>
