@@ -418,6 +418,26 @@ export const LectureRecorderBar = ({
     setConvertStage("Preparing MP4 export…");
     const startedAt = Date.now();
     if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
+  const downloadMp4 = async () => {
+    if (!previewBlob) return;
+
+    // Fast path: source is already an MP4 container — just rename & download.
+    // No FFmpeg, no re-encode. Takes milliseconds.
+    if (previewMime.startsWith("video/mp4") || previewBlob.type === "video/mp4") {
+      const url = URL.createObjectURL(new Blob([previewBlob], { type: "video/mp4" }));
+      triggerDownload(url, "mp4");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast.success("MP4 ready (instant export)");
+      return;
+    }
+
+    setConverting(true);
+    setConvertProgress(0);
+    setConvertElapsed(0);
+    const sourceIsH264 = isH264Container(previewMime);
+    setConvertStage(sourceIsH264 ? "Preparing fast remux…" : "Preparing MP4 export…");
+    const startedAt = Date.now();
+    if (convertTimerRef.current) window.clearInterval(convertTimerRef.current);
     convertTimerRef.current = window.setInterval(() => {
       setConvertElapsed(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
@@ -437,11 +457,10 @@ export const LectureRecorderBar = ({
       });
       setConvertProgress(0.2);
 
-      // Real progress from FFmpeg during the encode phase.
       ffmpeg.on("progress", ({ progress }) => {
         if (typeof progress === "number" && progress >= 0) {
           setConvertProgress(Math.min(0.96, 0.4 + progress * 0.56));
-          setConvertStage("Encoding 4K MP4…");
+          setConvertStage(sourceIsH264 ? "Remuxing to MP4…" : "Encoding 4K MP4…");
         }
       });
 
@@ -451,21 +470,37 @@ export const LectureRecorderBar = ({
       await ffmpeg.writeFile(inputName, await fetchFile(previewBlob));
 
       setConvertProgress(0.38);
-      setConvertStage("Encoding 4K MP4…");
-      // High quality 4K H.264 + AAC. veryfast = good balance of speed/quality
-      // in WASM. We always re-mux to guarantee audio is present in the MP4.
-      const exitCode = await ffmpeg.exec([
-        "-i", inputName,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "20",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-ac", "2",
-        "-movflags", "+faststart",
-        "out.mp4",
-      ]);
+
+      // Build args. When the source is already H.264 we stream-copy the video
+      // (orders of magnitude faster than libx264 in WASM) and only transcode
+      // audio to AAC. Otherwise we re-encode at 4K with a fast preset.
+      const args = sourceIsH264
+        ? [
+            "-i", inputName,
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            "out.mp4",
+          ]
+        : [
+            "-i", inputName,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-tune", "zerolatency",
+            "-pix_fmt", "yuv420p",
+            "-threads", "0",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            "out.mp4",
+          ];
+
+      setConvertStage(sourceIsH264 ? "Remuxing to MP4…" : "Encoding 4K MP4…");
+      const exitCode = await ffmpeg.exec(args);
       if (exitCode !== 0) throw new Error(`FFmpeg exited with code ${exitCode}`);
 
       setConvertStage("Finalizing…");
@@ -478,7 +513,12 @@ export const LectureRecorderBar = ({
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       setConvertProgress(1);
       setConvertStage("Done");
-      toast.success(`4K MP4 ready (${formatEta(Math.floor((Date.now() - startedAt) / 1000))})`);
+      const total = Math.floor((Date.now() - startedAt) / 1000);
+      toast.success(
+        sourceIsH264
+          ? `MP4 ready in ${formatEta(total)} (fast remux)`
+          : `MP4 ready in ${formatEta(total)}`
+      );
     } catch (err) {
       console.error(err);
       toast.error("MP4 conversion failed — downloading WebM instead");
