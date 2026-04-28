@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, forwardRef } from "react";
 import ffmpegCoreUrl from "@ffmpeg/core?url";
 import ffmpegWasmUrl from "@ffmpeg/core/wasm?url";
+import ffmpegWorkerUrl from "@ffmpeg/ffmpeg/worker?url";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
@@ -446,6 +447,7 @@ export const LectureRecorderBar = ({
       await ffmpeg.load({
         coreURL: ffmpegCoreUrl,
         wasmURL: ffmpegWasmUrl,
+        classWorkerURL: ffmpegWorkerUrl,
       });
       setConvertProgress(0.2);
 

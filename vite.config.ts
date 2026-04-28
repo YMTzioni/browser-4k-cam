@@ -19,4 +19,9 @@ export default defineConfig(({ mode }) => ({
     },
     dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime", "@tanstack/react-query", "@tanstack/query-core"],
   },
+  optimizeDeps: {
+    // FFmpeg uses worker-based ESM loading that can break under Vite pre-bundling.
+    // Excluding these packages prevents missing `worker.js` errors at runtime.
+    exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/core", "@ffmpeg/util"],
+  },
 }));
