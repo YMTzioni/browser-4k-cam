@@ -181,26 +181,6 @@ const Lecturer = () => {
 
       {!pdf ? (
         <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-          {/* Hero "course banner" — Classroom signature */}
-          <div className="relative overflow-hidden rounded-2xl bg-[image:var(--gradient-classroom-hero)] text-classroom-foreground shadow-[var(--shadow-classroom-lg)] p-8 sm:p-10">
-            <div className="absolute inset-0 opacity-20 pointer-events-none"
-                 style={{ backgroundImage: "radial-gradient(circle at 90% 10%, hsl(0 0% 100% / 0.4), transparent 40%), radial-gradient(circle at 10% 90%, hsl(0 0% 100% / 0.25), transparent 50%)" }} />
-            <div className="relative">
-              <div className="text-xs uppercase tracking-widest opacity-90 mb-2">My Classroom</div>
-              <h1 className="text-3xl sm:text-4xl font-bold leading-tight">Welcome back, Professor</h1>
-              <p className="mt-2 text-sm sm:text-base opacity-95 max-w-xl">
-                Upload your slides to start a new lesson. Present, annotate, and record — all in one place.
-              </p>
-            </div>
-          </div>
-
-          {/* Quick-actions grid (Classroom card style) */}
-          <section className="grid sm:grid-cols-3 gap-4">
-            <ClassroomStat icon={<BookOpen className="size-5" />} label="Lessons" value="—" tint="green" />
-            <ClassroomStat icon={<Users className="size-5" />} label="Audience" value="Live" tint="blue" />
-            <ClassroomStat icon={<Calendar className="size-5" />} label="Today" value={new Date().toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} tint="amber" />
-          </section>
-
           {/* Upload card — Material style */}
           <Card className="bg-classroom-surface border-classroom-border shadow-[var(--shadow-classroom)] p-0 overflow-hidden">
             <div className="px-6 py-4 border-b border-classroom-border flex items-center gap-2">
