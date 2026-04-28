@@ -57,6 +57,16 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        classroom: {
+          DEFAULT: "hsl(var(--classroom-primary))",
+          foreground: "hsl(var(--classroom-primary-foreground))",
+          secondary: "hsl(var(--classroom-secondary))",
+          surface: "hsl(var(--classroom-surface))",
+          "surface-foreground": "hsl(var(--classroom-surface-foreground))",
+          muted: "hsl(var(--classroom-muted))",
+          "muted-foreground": "hsl(var(--classroom-muted-foreground))",
+          border: "hsl(var(--classroom-border))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
