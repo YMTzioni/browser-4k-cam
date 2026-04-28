@@ -8,7 +8,10 @@ import {
   FileUp,
   Maximize2,
   Pencil,
-  Presentation,
+  GraduationCap,
+  BookOpen,
+  Users,
+  Calendar,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -133,21 +136,28 @@ const Lecturer = () => {
   };
 
   return (
-    <main className="min-h-screen bg-[image:var(--gradient-bg)]">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border/50 backdrop-blur">
+    <main className="min-h-screen bg-classroom-muted text-classroom-surface-foreground">
+      {/* Top bar — Classroom-style */}
+      <header className="flex items-center justify-between px-6 py-3 bg-classroom-surface border-b border-classroom-border shadow-[var(--shadow-classroom)] sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <Button asChild variant="ghost" size="sm">
+          <Button asChild variant="ghost" size="sm" className="text-classroom-muted-foreground hover:bg-classroom-muted">
             <Link to="/"><ArrowLeft className="size-4 mr-1" /> Recorder</Link>
           </Button>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Presentation className="size-4" />
-            <span className="font-semibold text-foreground">Lecturer Workspace</span>
+          <div className="w-px h-6 bg-classroom-border" />
+          <div className="flex items-center gap-2.5">
+            <div className="size-9 rounded-lg bg-[image:var(--gradient-classroom)] grid place-items-center shadow-[var(--shadow-classroom)]">
+              <GraduationCap className="size-5 text-classroom-foreground" />
+            </div>
+            <div className="leading-tight">
+              <div className="text-base font-semibold text-classroom-surface-foreground">Lecturer Classroom</div>
+              <div className="text-[11px] text-classroom-muted-foreground">Present · Annotate · Record</div>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <label htmlFor="pdf-upload">
             <input id="pdf-upload" type="file" accept="application/pdf" className="hidden" onChange={onUpload} />
-            <Button asChild variant="secondary" size="sm" className="gap-2 cursor-pointer">
+            <Button asChild size="sm" className="gap-2 cursor-pointer bg-classroom hover:bg-classroom/90 text-classroom-foreground">
               <span><FileUp className="size-4" /> {pdf ? "Replace PDF" : "Upload PDF"}</span>
             </Button>
           </label>
@@ -155,14 +165,19 @@ const Lecturer = () => {
             <>
               <Button
                 size="sm"
-                variant={annotateActive ? "default" : "secondary"}
+                variant={annotateActive ? "default" : "outline"}
                 onClick={() => setAnnotateActive((a) => !a)}
-                className="gap-2"
+                className={`gap-2 ${annotateActive ? "bg-classroom-secondary hover:bg-classroom-secondary/90 text-classroom-foreground" : "border-classroom-border bg-classroom-surface text-classroom-surface-foreground hover:bg-classroom-muted"}`}
               >
                 <Pencil className="size-4" />
                 {annotateActive ? "Hide annotations" : "Annotate"}
               </Button>
-              <Button size="sm" variant="secondary" onClick={enterFullscreen} className="gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={enterFullscreen}
+                className="gap-2 border-classroom-border bg-classroom-surface text-classroom-surface-foreground hover:bg-classroom-muted"
+              >
                 <Maximize2 className="size-4" /> Fullscreen
               </Button>
             </>
@@ -171,35 +186,65 @@ const Lecturer = () => {
       </header>
 
       {!pdf ? (
-        <div className="flex items-center justify-center px-6 py-24">
-          <Card className="max-w-xl w-full p-10 text-center space-y-4 border-dashed border-2">
-            <Presentation className="size-10 mx-auto text-primary" />
-            <h1 className="text-2xl font-semibold">Present a PDF and record your lecture</h1>
-            <p className="text-muted-foreground text-sm">
-              Upload your slides, present them fullscreen, draw on top, and capture everything by sharing your browser tab from the Recorder page.
-            </p>
-            <label htmlFor="pdf-upload-empty">
-              <input id="pdf-upload-empty" type="file" accept="application/pdf" className="hidden" onChange={onUpload} />
-              <Button asChild size="lg" className="gap-2 cursor-pointer mt-2">
-                <span><FileUp className="size-5" /> Choose PDF</span>
-              </Button>
-            </label>
-            <p className="text-xs text-muted-foreground pt-2">
-              Files stay on your device — nothing is uploaded.
-            </p>
+        <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
+          {/* Hero "course banner" — Classroom signature */}
+          <div className="relative overflow-hidden rounded-2xl bg-[image:var(--gradient-classroom-hero)] text-classroom-foreground shadow-[var(--shadow-classroom-lg)] p-8 sm:p-10">
+            <div className="absolute inset-0 opacity-20 pointer-events-none"
+                 style={{ backgroundImage: "radial-gradient(circle at 90% 10%, hsl(0 0% 100% / 0.4), transparent 40%), radial-gradient(circle at 10% 90%, hsl(0 0% 100% / 0.25), transparent 50%)" }} />
+            <div className="relative">
+              <div className="text-xs uppercase tracking-widest opacity-90 mb-2">My Classroom</div>
+              <h1 className="text-3xl sm:text-4xl font-bold leading-tight">Welcome back, Professor</h1>
+              <p className="mt-2 text-sm sm:text-base opacity-95 max-w-xl">
+                Upload your slides to start a new lesson. Present, annotate, and record — all in one place.
+              </p>
+            </div>
+          </div>
+
+          {/* Quick-actions grid (Classroom card style) */}
+          <section className="grid sm:grid-cols-3 gap-4">
+            <ClassroomStat icon={<BookOpen className="size-5" />} label="Lessons" value="—" tint="green" />
+            <ClassroomStat icon={<Users className="size-5" />} label="Audience" value="Live" tint="blue" />
+            <ClassroomStat icon={<Calendar className="size-5" />} label="Today" value={new Date().toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} tint="amber" />
+          </section>
+
+          {/* Upload card — Material style */}
+          <Card className="bg-classroom-surface border-classroom-border shadow-[var(--shadow-classroom)] p-0 overflow-hidden">
+            <div className="px-6 py-4 border-b border-classroom-border flex items-center gap-2">
+              <BookOpen className="size-4 text-classroom" />
+              <h2 className="text-sm font-semibold text-classroom-surface-foreground">Start a new lesson</h2>
+            </div>
+            <div className="p-8">
+              <label htmlFor="pdf-upload-empty" className="block">
+                <input id="pdf-upload-empty" type="file" accept="application/pdf" className="hidden" onChange={onUpload} />
+                <div className="border-2 border-dashed border-classroom-border rounded-xl p-10 text-center cursor-pointer hover:border-classroom hover:bg-classroom/5 transition-colors">
+                  <div className="size-14 rounded-full bg-classroom/10 grid place-items-center mx-auto mb-4">
+                    <FileUp className="size-6 text-classroom" />
+                  </div>
+                  <div className="text-base font-semibold text-classroom-surface-foreground">Choose your PDF slides</div>
+                  <p className="text-sm text-classroom-muted-foreground mt-1">
+                    Drop a file here or click to browse
+                  </p>
+                  <Button asChild size="lg" className="gap-2 mt-5 cursor-pointer bg-classroom hover:bg-classroom/90 text-classroom-foreground">
+                    <span><FileUp className="size-5" /> Upload PDF</span>
+                  </Button>
+                </div>
+              </label>
+              <p className="text-xs text-classroom-muted-foreground text-center pt-4">
+                🔒 Files stay on your device — nothing is uploaded.
+              </p>
+            </div>
           </Card>
         </div>
       ) : (
         <div className="p-4 h-[calc(100vh-65px)]">
-          {/* Stage (full width — slide nav lives in the recorder toolbar) */}
           <section className="relative flex flex-col h-full">
             <div
               ref={stageRef}
-              className="relative flex-1 rounded-lg bg-black/90 flex items-center justify-center overflow-hidden"
+              className="relative flex-1 rounded-xl bg-black/95 flex items-center justify-center overflow-hidden shadow-[var(--shadow-classroom-lg)] border border-classroom-border"
             >
               <canvas ref={canvasRef} className="shadow-2xl bg-white" />
             </div>
-            <p className="text-xs text-muted-foreground mt-2 text-center">
+            <p className="text-xs text-classroom-muted-foreground mt-2 text-center">
               ← → to navigate · Space for next · use the toolbar below to record this view directly.
             </p>
           </section>
@@ -224,6 +269,34 @@ const Lecturer = () => {
         onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
       />
     </main>
+  );
+};
+
+const ClassroomStat = ({
+  icon,
+  label,
+  value,
+  tint,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  tint: "green" | "blue" | "amber";
+}) => {
+  const tintClass =
+    tint === "green"
+      ? "bg-classroom/10 text-classroom"
+      : tint === "blue"
+      ? "bg-classroom-secondary/10 text-classroom-secondary"
+      : "bg-amber-100 text-amber-600";
+  return (
+    <div className="bg-classroom-surface border border-classroom-border rounded-xl p-4 flex items-center gap-3 shadow-[var(--shadow-classroom)] hover:shadow-[var(--shadow-classroom-lg)] transition-shadow">
+      <div className={`size-10 rounded-lg grid place-items-center ${tintClass}`}>{icon}</div>
+      <div className="leading-tight">
+        <div className="text-xs text-classroom-muted-foreground">{label}</div>
+        <div className="text-base font-semibold text-classroom-surface-foreground">{value}</div>
+      </div>
+    </div>
   );
 };
 

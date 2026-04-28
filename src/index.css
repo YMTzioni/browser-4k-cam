@@ -44,6 +44,20 @@ All colors MUST be HSL.
     --input: 230 20% 18%;
     --ring: 0 85% 60%;
 
+    /* Classroom-inspired palette (used in Lecturer workspace) */
+    --classroom-primary: 142 52% 38%;       /* Classroom green */
+    --classroom-primary-foreground: 0 0% 100%;
+    --classroom-secondary: 217 89% 51%;     /* Google blue */
+    --classroom-surface: 0 0% 100%;
+    --classroom-surface-foreground: 222 22% 14%;
+    --classroom-muted: 210 16% 96%;
+    --classroom-muted-foreground: 215 14% 40%;
+    --classroom-border: 214 15% 88%;
+    --gradient-classroom: linear-gradient(135deg, hsl(142 52% 38%), hsl(168 60% 40%));
+    --gradient-classroom-hero: linear-gradient(120deg, hsl(217 89% 51%) 0%, hsl(142 52% 38%) 100%);
+    --shadow-classroom: 0 1px 2px 0 hsl(0 0% 0% / 0.08), 0 2px 8px -2px hsl(0 0% 0% / 0.08);
+    --shadow-classroom-lg: 0 4px 12px -2px hsl(0 0% 0% / 0.12), 0 8px 24px -4px hsl(0 0% 0% / 0.12);
+
     --radius: 0.5rem;
 
     --sidebar-background: 0 0% 98%;
