@@ -136,7 +136,7 @@ const Lecturer = () => {
   };
 
   return (
-    <main className="min-h-screen bg-classroom-muted text-classroom-surface-foreground">
+    <main className="classroom-theme min-h-screen bg-classroom-muted text-classroom-surface-foreground">
       {/* Top bar — Classroom-style */}
       <header className="flex items-center justify-between px-6 py-3 bg-classroom-surface border-b border-classroom-border shadow-[var(--shadow-classroom)] sticky top-0 z-30">
         <div className="flex items-center gap-3">

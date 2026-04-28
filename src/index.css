@@ -124,4 +124,28 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Light "Classroom" scope — overrides shadcn semantic tokens locally so
+     all UI primitives (Popover, Button ghost, Card, etc.) render correctly
+     on top of the bright Classroom surfaces. Apply on the page wrapper AND
+     on any portal'd content (PopoverContent, DialogContent, etc.). */
+  .classroom-theme {
+    --background: 0 0% 100%;
+    --foreground: 222 22% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 22% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 22% 14%;
+    --primary: 142 52% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 16% 96%;
+    --secondary-foreground: 222 22% 14%;
+    --muted: 210 16% 96%;
+    --muted-foreground: 215 14% 40%;
+    --accent: 210 16% 96%;
+    --accent-foreground: 222 22% 14%;
+    --border: 214 15% 88%;
+    --input: 214 15% 88%;
+    --ring: 142 52% 38%;
+  }
 }
