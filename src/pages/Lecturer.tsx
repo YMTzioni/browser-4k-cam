@@ -8,7 +8,10 @@ import {
   FileUp,
   Maximize2,
   Pencil,
-  Presentation,
+  GraduationCap,
+  BookOpen,
+  Users,
+  Calendar,
 } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
