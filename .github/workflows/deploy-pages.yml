@@ -8,8 +8,9 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+# contents:write — peaceiris pushes built files to the gh-pages branch (branch-based Pages).
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -39,10 +40,23 @@ jobs:
       - name: SPA fallback
         run: cp dist/index.html dist/404.html
 
+      # Avoid GitHub Pages trying to process the site with Jekyll (can break SPA/asset paths).
+      - name: Disable Jekyll
+        run: touch dist/.nojekyll
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: dist
+
+      # Publishes the same dist to branch `gh-pages`. Use this if Pages is set to
+      # "Deploy from a branch" → gh-pages / (root) instead of the GitHub Actions artifact flow.
+      - name: Publish to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          force_orphan: true
 
   deploy:
     environment:
