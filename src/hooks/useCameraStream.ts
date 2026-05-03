@@ -85,12 +85,13 @@ const updateCenterAndCrop = (
   w: number,
   h: number,
 ) => {
+  // Product decision: keep lecturer at natural size (no digital zoom).
+  // We may still gently track center metadata, but output scale stays fixed at 1.
   if (autoCenter && faceBox) {
-    const targetScale = Math.min(3.5, Math.max(1.2, 0.32 / Math.max(0.04, faceBox.bw)));
     const targetY = faceBox.cy + faceBox.bh * 0.1;
     center.x += (faceBox.cx - center.x) * 0.22;
     center.y += (targetY - center.y) * 0.22;
-    center.scale += (targetScale - center.scale) * 0.14;
+    center.scale += (1 - center.scale) * 0.2;
   } else {
     center.x += (0.5 - center.x) * 0.2;
     center.y += (0.5 - center.y) * 0.2;
