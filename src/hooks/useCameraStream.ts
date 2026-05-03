@@ -40,10 +40,48 @@ interface Options {
   autoCenter?: boolean;
 }
 
+type FaceBox = { cx: number; cy: number; bw: number; bh: number };
+
+/**
+ * Smooth zoom/pan state + crop rect in **source pixel** space (video frame size).
+ */
+const updateCenterAndCrop = (
+  center: { x: number; y: number; scale: number },
+  faceBox: FaceBox | null,
+  autoCenter: boolean,
+  w: number,
+  h: number,
+) => {
+  if (autoCenter && faceBox) {
+    const targetScale = Math.min(3.5, Math.max(1.2, 0.32 / Math.max(0.04, faceBox.bw)));
+    const targetY = faceBox.cy + faceBox.bh * 0.1;
+    center.x += (faceBox.cx - center.x) * 0.22;
+    center.y += (targetY - center.y) * 0.22;
+    center.scale += (targetScale - center.scale) * 0.14;
+  } else {
+    center.x += (0.5 - center.x) * 0.2;
+    center.y += (0.5 - center.y) * 0.2;
+    center.scale += (1 - center.scale) * 0.2;
+  }
+
+  const cropW = w / center.scale;
+  const cropH = h / center.scale;
+  let sx = center.x * w - cropW / 2;
+  let sy = center.y * h - cropH / 2;
+  sx = Math.max(0, Math.min(w - cropW, sx));
+  sy = Math.max(0, Math.min(h - cropH, sy));
+  return { sx, sy, cropW, cropH };
+};
+
 /**
  * Acquires the webcam and optionally applies background blur or replacement
  * via MediaPipe Selfie Segmentation. Returns BOTH the raw stream and a
  * processed stream (canvas-based) suitable for previewing and recording.
+ *
+ * Latency note: running selfie segmentation on every frame adds noticeable
+ * delay between mic and picture. When `backgroundMode === "none"` we avoid
+ * segmentation entirely — raw frames for no auto-center, face-detection-only
+ * cropping when auto-center is on.
  */
 export const useCameraStream = ({
   backgroundMode,
@@ -191,9 +229,19 @@ export const useCameraStream = ({
 
     let cancelled = false;
 
+    const closeMl = () => {
+      if (segmenterRef.current) {
+        segmenterRef.current.close().catch(() => {});
+        segmenterRef.current = null;
+      }
+      if (faceDetectorRef.current) {
+        faceDetectorRef.current.close().catch(() => {});
+        faceDetectorRef.current = null;
+      }
+    };
+
     (async () => {
       try {
-        // Set up offscreen video + canvas
         const video = document.createElement("video");
         video.srcObject = rawStream;
         video.muted = true;
@@ -207,6 +255,92 @@ export const useCameraStream = ({
         canvasRef.current = canvas;
         const ctx = canvas.getContext("2d")!;
 
+        const CAPTURE_FPS = 30;
+
+        // --- Fast path: no ML — lowest latency (mic vs camera sync). ---
+        if (backgroundMode === "none" && !autoCenter) {
+          closeMl();
+          runningRef.current = true;
+          const tick = () => {
+            if (!runningRef.current || cancelled) return;
+            if (video.readyState >= 2) {
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
+            rafRef.current = requestAnimationFrame(tick);
+          };
+          tick();
+          const out = canvas.captureStream(CAPTURE_FPS);
+          processedStreamRef.current = out;
+          setProcessedStream(out);
+          return;
+        }
+
+        // --- Face-only path (none + auto-center): detection only, no segmentation. ---
+        if (backgroundMode === "none" && autoCenter) {
+          closeMl();
+          const FaceDetectionCtor = await loadFaceDetection();
+          if (cancelled) return;
+
+          const faceDetector = new FaceDetectionCtor({
+            locateFile: (file) =>
+              `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
+          });
+          faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
+          faceDetectorRef.current = faceDetector;
+
+          const faceBoxRef: { current: FaceBox | null } = { current: null };
+          faceDetector.onResults((results: FaceResults) => {
+            const det = results.detections?.[0];
+            if (!det) {
+              faceBoxRef.current = null;
+              return;
+            }
+            const bb = det.boundingBox as unknown as {
+              xCenter: number;
+              yCenter: number;
+              width: number;
+              height: number;
+            };
+            faceBoxRef.current = {
+              cx: bb.xCenter,
+              cy: bb.yCenter,
+              bw: bb.width,
+              bh: bb.height,
+            };
+          });
+
+          const center = { x: 0.5, y: 0.5, scale: 1 };
+          runningRef.current = true;
+          let frame = 0;
+          const tick = async () => {
+            if (!runningRef.current || cancelled) return;
+            if (video.readyState >= 2) {
+              const w = canvas.width;
+              const h = canvas.height;
+              if (frame++ % 2 === 0) {
+                try {
+                  await faceDetector.send({ image: video });
+                } catch {
+                  /* ignore */
+                }
+              }
+              const { sx, sy, cropW, cropH } = updateCenterAndCrop(center, faceBoxRef.current, autoCenterRef.current, w, h);
+              ctx.clearRect(0, 0, w, h);
+              ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, w, h);
+            }
+            rafRef.current = requestAnimationFrame(() => {
+              void tick();
+            });
+          };
+          tick();
+
+          const out = canvas.captureStream(CAPTURE_FPS);
+          processedStreamRef.current = out;
+          setProcessedStream(out);
+          return;
+        }
+
+        // --- Full segmentation path (blur / image): heavier, higher latency. ---
         const SelfieSegmentationCtor = await loadSelfieSegmentation();
         if (cancelled) return;
         const segmenter = new SelfieSegmentationCtor({
@@ -215,7 +349,6 @@ export const useCameraStream = ({
         });
         segmenter.setOptions({ modelSelection: 1 });
 
-        // Face detector — drives auto-centering.
         const FaceDetectionCtor = await loadFaceDetection();
         if (cancelled) return;
         const faceDetector = new FaceDetectionCtor({
@@ -225,10 +358,8 @@ export const useCameraStream = ({
         faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
         faceDetectorRef.current = faceDetector;
 
-        // Auto-center state — smoothed face center & zoom (0..1 of source).
         const center = { x: 0.5, y: 0.5, scale: 1 };
-        // Latest detected face box (normalized). Updated by FaceDetection.
-        const faceBoxRef: { current: { cx: number; cy: number; bw: number; bh: number } | null } = { current: null };
+        const faceBoxRef: { current: FaceBox | null } = { current: null };
 
         faceDetector.onResults((results: FaceResults) => {
           const det = results.detections?.[0];
@@ -236,7 +367,6 @@ export const useCameraStream = ({
             faceBoxRef.current = null;
             return;
           }
-          // boundingBox is normalized (xCenter, yCenter, width, height).
           const bb = det.boundingBox as unknown as {
             xCenter: number;
             yCenter: number;
@@ -256,60 +386,39 @@ export const useCameraStream = ({
           const h = canvas.height;
           const mode = modeRef.current;
 
-          if (autoCenterRef.current) {
-            // Use the latest face box from FaceDetection.
-            const box = faceBoxRef.current;
-            if (box) {
-              // Aim for the FACE to fill ~32% of frame width — strong but
-              // comfortable head-and-shoulders framing. Clamp scale 1.2..3.5.
-              const targetScale = Math.min(3.5, Math.max(1.2, 0.32 / Math.max(0.04, box.bw)));
-              // Add a small downward offset so the face sits a bit above
-              // vertical center (headroom looks more natural than dead-center).
-              const targetY = box.cy + box.bh * 0.1;
-              center.x += (box.cx - center.x) * 0.22;
-              center.y += (targetY - center.y) * 0.22;
-              center.scale += (targetScale - center.scale) * 0.14;
-            }
-          } else {
-            // Ease back to a neutral, full-frame view.
-            center.x += (0.5 - center.x) * 0.2;
-            center.y += (0.5 - center.y) * 0.2;
-            center.scale += (1 - center.scale) * 0.2;
-          }
-
-          // Crop window in source coords keeping person centered.
-          const cropW = w / center.scale;
-          const cropH = h / center.scale;
-          let sx = center.x * w - cropW / 2;
-          let sy = center.y * h - cropH / 2;
-          sx = Math.max(0, Math.min(w - cropW, sx));
-          sy = Math.max(0, Math.min(h - cropH, sy));
+          const { sx, sy, cropW, cropH } = updateCenterAndCrop(
+            center,
+            faceBoxRef.current,
+            autoCenterRef.current,
+            w,
+            h,
+          );
 
           ctx.save();
           ctx.clearRect(0, 0, w, h);
 
-          if (mode === "none") {
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
-            ctx.restore();
-            return;
-          }
-
-          // Person mask cropped & scaled to canvas
-          ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
-          ctx.globalCompositeOperation = "source-in";
-          ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
-
-          ctx.globalCompositeOperation = "destination-over";
           if (mode === "blur") {
+            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
+            ctx.globalCompositeOperation = "source-in";
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+
+            ctx.globalCompositeOperation = "destination-over";
             ctx.filter = `blur(${blurRef.current}px)`;
             ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
             ctx.filter = "none";
           } else if (mode === "image" && bgImageRef.current) {
-            // cover-fit
+            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
+            ctx.globalCompositeOperation = "source-in";
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+
+            ctx.globalCompositeOperation = "destination-over";
             const img = bgImageRef.current;
             const cr = w / h;
             const ir = img.width / img.height;
-            let dw = w, dh = h, dx = 0, dy = 0;
+            let dw = w,
+              dh = h,
+              dx = 0,
+              dy = 0;
             if (ir > cr) {
               dh = h;
               dw = h * ir;
@@ -321,27 +430,22 @@ export const useCameraStream = ({
             }
             ctx.drawImage(img, dx, dy, dw, dh);
           } else {
-            // fallback solid
-            ctx.fillStyle = "#000";
-            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
           }
           ctx.restore();
         });
         segmenterRef.current = segmenter;
 
-        // Processing loop — always runs so canvas mirrors raw video even in "none" mode
         runningRef.current = true;
         let faceFrame = 0;
         const tick = async () => {
-          if (!runningRef.current) return;
+          if (!runningRef.current || cancelled) return;
           if (video.readyState >= 2) {
             try {
               await segmenter.send({ image: video });
             } catch {
               /* ignore */
             }
-            // Run face detection every other frame (~15fps) — plenty for tracking
-            // and keeps CPU usage reasonable.
             if (autoCenterRef.current && faceFrame++ % 2 === 0) {
               try {
                 await faceDetector.send({ image: video });
@@ -354,8 +458,7 @@ export const useCameraStream = ({
         };
         tick();
 
-        // captureStream from canvas — will be used for preview & recording
-        const out = canvas.captureStream(30);
+        const out = canvas.captureStream(CAPTURE_FPS);
         processedStreamRef.current = out;
         setProcessedStream(out);
       } catch (e: unknown) {
@@ -369,11 +472,19 @@ export const useCameraStream = ({
       runningRef.current = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+      if (segmenterRef.current) {
+        segmenterRef.current.close().catch(() => {});
+        segmenterRef.current = null;
+      }
+      if (faceDetectorRef.current) {
+        faceDetectorRef.current.close().catch(() => {});
+        faceDetectorRef.current = null;
+      }
       processedStreamRef.current?.getTracks().forEach((track) => track.stop());
       processedStreamRef.current = null;
       setProcessedStream(null);
     };
-  }, [getCameraErrorMessage, rawStream]);
+  }, [getCameraErrorMessage, rawStream, backgroundMode, autoCenter]);
 
   useEffect(() => () => stopAll(), [stopAll]);
 

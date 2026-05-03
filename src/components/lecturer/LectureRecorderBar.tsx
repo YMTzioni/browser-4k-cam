@@ -296,7 +296,8 @@ export const LectureRecorderBar = ({
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
-              channelCount: 2,
+              // Mono voice + fewer DSP buffers tends to track video slightly better than stereo.
+              channelCount: 1,
               sampleRate: 48000,
             },
           });
