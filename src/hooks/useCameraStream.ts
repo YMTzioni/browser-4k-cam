@@ -289,7 +289,8 @@ export const useCameraStream = ({
         canvasRef.current = canvas;
         const ctx = canvas.getContext("2d")!;
 
-        const CAPTURE_FPS = 30;
+        // Keep in line with lecture composer (24fps) to reduce duplicate work and heat.
+        const CAPTURE_FPS = 24;
 
         // --- Fast path: no ML — lowest latency (mic vs camera sync). ---
         if (backgroundMode === "none" && !autoCenter) {

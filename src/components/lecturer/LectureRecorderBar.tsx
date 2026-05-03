@@ -156,9 +156,6 @@ export const LectureRecorderBar = ({
     return candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "video/webm";
   };
 
-  // Target output resolution: up to 4K (3840 wide), preserving stage aspect.
-  const TARGET_OUTPUT_WIDTH = 3840;
-
   const start = async () => {
     const stage = stageRef.current;
     const pdf = pdfCanvasRef.current;
@@ -167,24 +164,29 @@ export const LectureRecorderBar = ({
       return;
     }
     try {
-      // Composer canvas sized for 4K output (preserves stage aspect ratio).
+      // Composer resolution: ~2× CSS width for sharp slides, capped well below 4K.
+      // Full-width 4K compositing every rAF frame melts the GPU/CPU after a few seconds.
+      const MAX_OUTPUT_WIDTH = 2560;
+      const MIN_OUTPUT_WIDTH = 1280;
       const stageRect = stage.getBoundingClientRect();
       const stageAspect = stageRect.width / stageRect.height;
-      const outW = TARGET_OUTPUT_WIDTH;
-      const outH = Math.round(outW / stageAspect / 2) * 2; // even number for H.264
+      let outW = Math.round(stageRect.width * 2);
+      outW = Math.min(MAX_OUTPUT_WIDTH, Math.max(MIN_OUTPUT_WIDTH, outW));
+      if (outW % 2 !== 0) outW += 1;
+      const outH = Math.round(outW / stageAspect / 2) * 2; // even number for codecs
       const composer = document.createElement("canvas");
       composer.width = outW;
       composer.height = outH;
       composerCanvasRef.current = composer;
       const cctx = composer.getContext("2d", { alpha: false })!;
       cctx.imageSmoothingEnabled = true;
-      cctx.imageSmoothingQuality = "high";
+      cctx.imageSmoothingQuality = "medium";
 
       const drawFrame = () => {
         const stageEl = stageRef.current;
         if (!stageEl) return;
         const sRect = stageEl.getBoundingClientRect();
-        // Scale factor from CSS px (stage) → composer (4K) px.
+        // Scale factor from CSS px (stage) → composer px.
         const dpr = composer.width / sRect.width;
 
         // Background
@@ -279,7 +281,10 @@ export const LectureRecorderBar = ({
         
       };
 
-      const COMPOSER_CAPTURE_FPS = 30;
+      // Match encode cadence: compositing more often than this wastes CPU (main cause of
+      // freezes ~5–10s into a session when rAF runs at display refresh rate).
+      const COMPOSER_CAPTURE_FPS = 24;
+      const composerFrameMs = 1000 / COMPOSER_CAPTURE_FPS;
       const composerStream = composer.captureStream(COMPOSER_CAPTURE_FPS);
       composerStreamRef.current = composerStream;
 
@@ -318,9 +323,11 @@ export const LectureRecorderBar = ({
       }
 
       const mimeType = pickMimeType();
+      const videoBitsPerSecond =
+        outW >= 2400 ? 14_000_000 : outW >= 1920 ? 12_000_000 : 9_000_000;
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 25_000_000, // ~25 Mbps for 4K
+        videoBitsPerSecond,
         audioBitsPerSecond: 192_000,
       });
       chunksRef.current = [];
@@ -331,17 +338,20 @@ export const LectureRecorderBar = ({
         cleanup();
       };
 
-      // Larger timeslice = fewer chunk boundaries = smoother playback.
       recorderRef.current = recorder;
 
+      let lastComposeAt = 0;
       const composerDrawLoop = () => {
         composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
-        if (recorderRef.current?.state === "recording") {
-          drawFrame();
-        }
+        if (recorderRef.current?.state !== "recording") return;
+        const now = performance.now();
+        if (now - lastComposeAt < composerFrameMs - 0.75) return;
+        lastComposeAt = now;
+        drawFrame();
       };
 
-      recorder.start(2000);
+      // Smaller chunks reduce RAM spikes during long WebM muxing in the tab.
+      recorder.start(750);
       drawFrame();
       composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
 
