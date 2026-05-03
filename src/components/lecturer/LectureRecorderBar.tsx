@@ -97,7 +97,8 @@ export const LectureRecorderBar = ({
   const micStreamRef = useRef<MediaStream | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerStreamRef = useRef<MediaStream | null>(null);
-  const drawIntervalRef = useRef<number | null>(null);
+  /** requestAnimationFrame id for composer redraw (syncs with display refresh for smoother camera bubble). */
+  const composerDrawRafRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const cameraBubbleRef = useRef<HTMLDivElement | null>(null);
   const shapeRef = useRef<CameraShape>(shape);
@@ -133,8 +134,10 @@ export const LectureRecorderBar = ({
 
   const cleanup = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
-    if (drawIntervalRef.current) window.clearInterval(drawIntervalRef.current);
-    drawIntervalRef.current = null;
+    if (composerDrawRafRef.current !== null) {
+      cancelAnimationFrame(composerDrawRafRef.current);
+      composerDrawRafRef.current = null;
+    }
     composerStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     composerStreamRef.current = null;
@@ -275,14 +278,9 @@ export const LectureRecorderBar = ({
 
         
       };
-      // Use a fixed-rate timer instead of rAF — rAF is throttled when the tab
-      // loses focus or when expensive layout work happens, which causes the
-      // recorded video to "skip". setInterval gives us a steady cadence.
-      const FPS = 30;
-      drawFrame();
-      drawIntervalRef.current = window.setInterval(drawFrame, 1000 / FPS);
 
-      const composerStream = composer.captureStream(FPS);
+      const COMPOSER_CAPTURE_FPS = 30;
+      const composerStream = composer.captureStream(COMPOSER_CAPTURE_FPS);
       composerStreamRef.current = composerStream;
 
       // Feed the mic track directly into MediaRecorder. This is more reliable
@@ -334,8 +332,19 @@ export const LectureRecorderBar = ({
       };
 
       // Larger timeslice = fewer chunk boundaries = smoother playback.
-      recorder.start(2000);
       recorderRef.current = recorder;
+
+      const composerDrawLoop = () => {
+        composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
+        if (recorderRef.current?.state === "recording") {
+          drawFrame();
+        }
+      };
+
+      recorder.start(2000);
+      drawFrame();
+      composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
+
       setRecording(true);
       setPaused(false);
       setElapsed(0);

@@ -43,6 +43,39 @@ interface Options {
 type FaceBox = { cx: number; cy: number; bw: number; bh: number };
 
 /**
+ * Drive updates from actual decoded camera frames when possible (smoother than a
+ * blind rAF loop). Falls back to rAF where requestVideoFrameCallback is missing.
+ */
+const subscribeVideoPump = (
+  video: HTMLVideoElement,
+  onFrame: () => void,
+  isRunning: () => boolean,
+): (() => void) => {
+  if (typeof video.requestVideoFrameCallback === "function") {
+    let handle = 0;
+    const pump: VideoFrameCallback = () => {
+      if (!isRunning()) return;
+      onFrame();
+      if (!isRunning()) return;
+      handle = video.requestVideoFrameCallback(pump);
+    };
+    handle = video.requestVideoFrameCallback(pump);
+    return () => {
+      video.cancelVideoFrameCallback(handle);
+    };
+  }
+  let rafId = 0;
+  const pump = () => {
+    if (!isRunning()) return;
+    onFrame();
+    if (!isRunning()) return;
+    rafId = requestAnimationFrame(pump);
+  };
+  rafId = requestAnimationFrame(pump);
+  return () => cancelAnimationFrame(rafId);
+};
+
+/**
  * Smooth zoom/pan state + crop rect in **source pixel** space (video frame size).
  */
 const updateCenterAndCrop = (
@@ -228,6 +261,7 @@ export const useCameraStream = ({
     }
 
     let cancelled = false;
+    let cancelVideoPump: (() => void) | null = null;
 
     const closeMl = () => {
       if (segmenterRef.current) {
@@ -261,14 +295,15 @@ export const useCameraStream = ({
         if (backgroundMode === "none" && !autoCenter) {
           closeMl();
           runningRef.current = true;
-          const tick = () => {
-            if (!runningRef.current || cancelled) return;
-            if (video.readyState >= 2) {
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            }
-            rafRef.current = requestAnimationFrame(tick);
-          };
-          tick();
+          cancelVideoPump = subscribeVideoPump(
+            video,
+            () => {
+              if (video.readyState >= 2) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              }
+            },
+            () => runningRef.current && !cancelled,
+          );
           const out = canvas.captureStream(CAPTURE_FPS);
           processedStreamRef.current = out;
           setProcessedStream(out);
@@ -470,6 +505,8 @@ export const useCameraStream = ({
     return () => {
       cancelled = true;
       runningRef.current = false;
+      cancelVideoPump?.();
+      cancelVideoPump = null;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
       if (segmenterRef.current) {
