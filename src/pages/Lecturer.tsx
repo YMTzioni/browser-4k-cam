@@ -29,6 +29,7 @@ type LoadedPdf = {
 };
 
 const Lecturer = () => {
+  const [workspaceMode, setWorkspaceMode] = useState<"pdf" | "window" | null>(null);
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [page, setPage] = useState(1);
   const [annotateActive, setAnnotateActive] = useState(false);
@@ -45,6 +46,7 @@ const Lecturer = () => {
     try {
       const buf = await file.arrayBuffer();
       const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+      setWorkspaceMode("pdf");
       setPdf({ doc, name: file.name, numPages: doc.numPages });
       setPage(1);
       
@@ -149,12 +151,25 @@ const Lecturer = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <label htmlFor="pdf-upload">
-            <input id="pdf-upload" type="file" accept="application/pdf" className="hidden" onChange={onUpload} />
-            <Button asChild size="sm" className="gap-2 cursor-pointer bg-classroom hover:bg-classroom/90 text-classroom-foreground">
-              <span><FileUp className="size-4" /> {pdf ? "Replace PDF" : "Upload PDF"}</span>
-            </Button>
-          </label>
+          {workspaceMode !== "window" && (
+            <label htmlFor="pdf-upload">
+              <input id="pdf-upload" type="file" accept="application/pdf" className="hidden" onChange={onUpload} />
+              <Button asChild size="sm" className="gap-2 cursor-pointer bg-classroom hover:bg-classroom/90 text-classroom-foreground">
+                <span><FileUp className="size-4" /> {pdf ? "Replace PDF" : "Upload PDF"}</span>
+              </Button>
+            </label>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setWorkspaceMode(null);
+              setPdf(null);
+            }}
+            className="border-classroom-border bg-classroom-surface text-classroom-surface-foreground hover:bg-classroom-muted"
+          >
+            Choose source
+          </Button>
           {pdf && (
             <>
               <Button
@@ -179,7 +194,33 @@ const Lecturer = () => {
         </div>
       </header>
 
-      {!pdf ? (
+      {workspaceMode === null ? (
+        <div className="max-w-5xl mx-auto px-6 py-8">
+          <Card className="bg-classroom-surface border-classroom-border shadow-[var(--shadow-classroom)] p-0 overflow-hidden">
+            <div className="px-6 py-4 border-b border-classroom-border flex items-center gap-2">
+              <BookOpen className="size-4 text-classroom" />
+              <h2 className="text-sm font-semibold text-classroom-surface-foreground">בחר מקור הקלטה</h2>
+            </div>
+            <div className="p-8 grid gap-4 sm:grid-cols-2">
+              <Button
+                size="lg"
+                className="h-28 text-base bg-classroom hover:bg-classroom/90 text-classroom-foreground"
+                onClick={() => setWorkspaceMode("pdf")}
+              >
+                <FileUp className="size-5 mr-2" /> בחר PDF
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-28 text-base border-classroom-border bg-classroom-surface text-classroom-surface-foreground hover:bg-classroom-muted"
+                onClick={() => setWorkspaceMode("window")}
+              >
+                <Maximize2 className="size-5 mr-2" /> הקלט חלון / מסך
+              </Button>
+            </div>
+          </Card>
+        </div>
+      ) : workspaceMode === "pdf" && !pdf ? (
         <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
           {/* Upload card — Material style */}
           <Card className="bg-classroom-surface border-classroom-border shadow-[var(--shadow-classroom)] p-0 overflow-hidden">
@@ -212,13 +253,18 @@ const Lecturer = () => {
       ) : (
         <div className="p-4 h-[calc(100vh-65px)]">
           <section className="relative flex flex-col h-full">
-            <div className="relative flex-1 rounded-xl bg-black/95 flex items-center justify-center overflow-hidden shadow-[var(--shadow-classroom-lg)] border border-classroom-border p-2">
-              <div
-                ref={stageRef}
-                className="relative w-full max-h-full aspect-[297/210] flex items-center justify-center overflow-hidden"
-              >
-                <canvas ref={canvasRef} className="shadow-2xl bg-white" />
-              </div>
+            <div
+              ref={stageRef}
+              className="relative flex-1 rounded-xl bg-black/95 flex items-center justify-center overflow-hidden shadow-[var(--shadow-classroom-lg)] border border-classroom-border"
+            >
+              {workspaceMode === "pdf" && pdf ? (
+                <canvas ref={canvasRef} className="shadow-2xl bg-white max-w-full max-h-full" />
+              ) : (
+                <div className="text-center text-classroom-muted-foreground">
+                  <p className="text-sm">מצב הקלטת חלון/מסך מוכן.</p>
+                  <p className="text-xs mt-1">לחץ Record ובחר חלון/כרטיסייה מהדפדפן.</p>
+                </div>
+              )}
             </div>
             <p className="text-xs text-classroom-muted-foreground mt-2 text-center">
               ← → to navigate · Space for next · use the toolbar below to record this view directly.
@@ -233,17 +279,20 @@ const Lecturer = () => {
         onClose={() => setAnnotateActive(false)}
       />
 
-      {pdf && <LectureRecorderBar
-        showCamera={showCamera}
-        onToggleCamera={() => setShowCamera((s) => !s)}
-        pdfCanvasRef={canvasRef}
-        stageRef={stageRef}
-        getAnnotationCanvas={() => annotationRef.current?.getCanvas() ?? null}
-        page={page}
-        totalPages={pdf?.numPages ?? 0}
-        onPrevPage={() => setPage((p) => Math.max(1, p - 1))}
-        onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
-      />}
+      {workspaceMode && (
+        <LectureRecorderBar
+          showCamera={showCamera}
+          onToggleCamera={() => setShowCamera((s) => !s)}
+          pdfCanvasRef={canvasRef}
+          stageRef={stageRef}
+          getAnnotationCanvas={() => annotationRef.current?.getCanvas() ?? null}
+          page={page}
+          totalPages={workspaceMode === "pdf" ? (pdf?.numPages ?? 0) : 0}
+          onPrevPage={() => setPage((p) => Math.max(1, p - 1))}
+          onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
+          initialCaptureSource={workspaceMode === "window" ? "display" : "workspace"}
+        />
+      )}
     </main>
   );
 };

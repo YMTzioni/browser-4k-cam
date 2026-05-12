@@ -55,6 +55,7 @@ type Props = {
   totalPages: number;
   onPrevPage: () => void;
   onNextPage: () => void;
+  initialCaptureSource?: CaptureSource;
 };
 
 type CaptureSource = "workspace" | "display";
@@ -79,13 +80,17 @@ export const LectureRecorderBar = ({
   totalPages,
   onPrevPage,
   onNextPage,
+  initialCaptureSource = "workspace",
 }: Props) => {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [captureSource, setCaptureSource] = useState<CaptureSource>("workspace");
+  const [captureSource, setCaptureSource] = useState<CaptureSource>(initialCaptureSource);
+  useEffect(() => {
+    setCaptureSource(initialCaptureSource);
+  }, [initialCaptureSource]);
 
   // Camera appearance options
   const [bgMode, setBgMode] = useState<BackgroundMode>("none");
