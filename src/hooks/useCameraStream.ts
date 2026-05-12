@@ -31,7 +31,7 @@ const loadFaceDetection = async (): Promise<new (cfg: { locateFile: (f: string) 
   return Ctor as new (cfg: { locateFile: (f: string) => string }) => FaceDetectionType;
 };
 
-export type BackgroundMode = "none" | "blur" | "image";
+export type BackgroundMode = "none" | "blur" | "image" | "cutout";
 
 interface Options {
   backgroundMode: BackgroundMode;
@@ -434,7 +434,12 @@ export const useCameraStream = ({
           ctx.save();
           ctx.clearRect(0, 0, w, h);
 
-          if (mode === "blur") {
+          if (mode === "cutout") {
+            // Keep only the lecturer pixels and leave background transparent.
+            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
+            ctx.globalCompositeOperation = "source-in";
+            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+          } else if (mode === "blur") {
             ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
             ctx.globalCompositeOperation = "source-in";
             ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);

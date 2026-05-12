@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
 
-export type CameraShape = "rounded" | "circle" | "rectangle";
+export type CameraShape = "rounded" | "circle" | "rectangle" | "none";
 
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
@@ -241,6 +241,9 @@ export const LectureRecorderBar = ({
             cctx.beginPath();
             cctx.arc(cx, cy, r, 0, Math.PI * 2);
             cctx.closePath();
+          } else if (sh === "none") {
+            cctx.beginPath();
+            cctx.rect(dx, dy, dw, dh);
           } else if (sh === "rectangle") {
             cctx.beginPath();
             cctx.rect(dx, dy, dw, dh);
@@ -261,20 +264,22 @@ export const LectureRecorderBar = ({
           }
           cctx.restore();
           // Ring
-          cctx.lineWidth = 2 * dpr;
-          cctx.strokeStyle = "hsl(var(--primary))";
-          if (sh === "circle") {
-            const cx = dx + dw / 2;
-            const cy = dy + dh / 2;
-            const r = Math.min(dw, dh) / 2;
-            cctx.beginPath();
-            cctx.arc(cx, cy, r, 0, Math.PI * 2);
-            cctx.stroke();
-          } else if (sh === "rectangle") {
-            cctx.strokeRect(dx, dy, dw, dh);
-          } else {
-            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
-            cctx.stroke();
+          if (sh !== "none") {
+            cctx.lineWidth = 2 * dpr;
+            cctx.strokeStyle = "hsl(var(--primary))";
+            if (sh === "circle") {
+              const cx = dx + dw / 2;
+              const cy = dy + dh / 2;
+              const r = Math.min(dw, dh) / 2;
+              cctx.beginPath();
+              cctx.arc(cx, cy, r, 0, Math.PI * 2);
+              cctx.stroke();
+            } else if (sh === "rectangle") {
+              cctx.strokeRect(dx, dy, dw, dh);
+            } else {
+              roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+              cctx.stroke();
+            }
           }
         }
 
@@ -528,7 +533,7 @@ export const LectureRecorderBar = ({
                 <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Background
                 </Label>
-                <div className="grid grid-cols-3 gap-1">
+                <div className="grid grid-cols-4 gap-1">
                   <Button
                     size="sm"
                     variant={bgMode === "none" ? "default" : "outline"}
@@ -543,6 +548,13 @@ export const LectureRecorderBar = ({
                     className="gap-1"
                   >
                     <Sparkles className="size-3" /> Blur
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={bgMode === "cutout" ? "default" : "outline"}
+                    onClick={() => setBgMode("cutout")}
+                  >
+                    Cutout
                   </Button>
                   <Button
                     size="sm"
@@ -573,7 +585,7 @@ export const LectureRecorderBar = ({
                 <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Shape
                 </Label>
-                <div className="grid grid-cols-3 gap-1">
+                <div className="grid grid-cols-4 gap-1">
                   <Button
                     size="sm"
                     variant={shape === "rounded" ? "default" : "outline"}
@@ -597,6 +609,14 @@ export const LectureRecorderBar = ({
                     title="Rectangle"
                   >
                     <RectangleHorizontal className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={shape === "none" ? "default" : "outline"}
+                    onClick={() => setShape("none")}
+                    title="No frame"
+                  >
+                    None
                   </Button>
                 </div>
               </div>
@@ -723,7 +743,11 @@ const DraggableCameraBubble = forwardRef<
   };
 
   const shapeClass =
-    shape === "circle" ? "rounded-full" : shape === "rectangle" ? "rounded-none" : "rounded-xl";
+    shape === "circle"
+      ? "rounded-full"
+      : shape === "rectangle" || shape === "none"
+      ? "rounded-none"
+      : "rounded-xl";
 
   return (
     <div
@@ -732,7 +756,7 @@ const DraggableCameraBubble = forwardRef<
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className={`fixed z-50 overflow-hidden shadow-2xl ring-2 ring-primary cursor-grab active:cursor-grabbing select-none ${shapeClass}`}
+      className={`fixed z-50 cursor-grab active:cursor-grabbing select-none ${shape === "none" ? "" : "overflow-hidden shadow-2xl ring-2 ring-primary"} ${shapeClass}`}
       style={{ left: pos.x, top: pos.y, width, height }}
     >
       {hasStream ? (

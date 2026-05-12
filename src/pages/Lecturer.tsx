@@ -212,11 +212,13 @@ const Lecturer = () => {
       ) : (
         <div className="p-4 h-[calc(100vh-65px)]">
           <section className="relative flex flex-col h-full">
-            <div
-              ref={stageRef}
-              className="relative flex-1 rounded-xl bg-black/95 flex items-center justify-center overflow-hidden shadow-[var(--shadow-classroom-lg)] border border-classroom-border"
-            >
-              <canvas ref={canvasRef} className="shadow-2xl bg-white" />
+            <div className="relative flex-1 rounded-xl bg-black/95 flex items-center justify-center overflow-hidden shadow-[var(--shadow-classroom-lg)] border border-classroom-border p-2">
+              <div
+                ref={stageRef}
+                className="relative w-full max-h-full aspect-[297/210] flex items-center justify-center overflow-hidden"
+              >
+                <canvas ref={canvasRef} className="shadow-2xl bg-white" />
+              </div>
             </div>
             <p className="text-xs text-classroom-muted-foreground mt-2 text-center">
               ← → to navigate · Space for next · use the toolbar below to record this view directly.
