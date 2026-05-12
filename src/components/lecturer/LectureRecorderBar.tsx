@@ -324,8 +324,87 @@ export const LectureRecorderBar = ({
         });
         displayStreamRef.current = display;
         onDisplayPreviewStream?.(display);
-        videoTracks = display.getVideoTracks();
-        outW = display.getVideoTracks()[0]?.getSettings().width ?? 1920;
+        const displayTrack = display.getVideoTracks()[0];
+        outW = displayTrack?.getSettings().width ?? 1920;
+        const outH = displayTrack?.getSettings().height ?? Math.round(outW * 9 / 16);
+        displayTrack?.addEventListener("ended", () => {
+          onDisplayPreviewStream?.(null);
+          if (recorderRef.current?.state === "recording") {
+            recorderRef.current.stop();
+          }
+        });
+
+        const composer = document.createElement("canvas");
+        composer.width = outW;
+        composer.height = outH;
+        composerCanvasRef.current = composer;
+        const cctx = composer.getContext("2d", { alpha: false })!;
+        cctx.imageSmoothingEnabled = true;
+        cctx.imageSmoothingQuality = "medium";
+
+        const displayVideo = document.createElement("video");
+        displayVideo.srcObject = display;
+        displayVideo.muted = true;
+        displayVideo.playsInline = true;
+        await displayVideo.play();
+
+        const COMPOSER_CAPTURE_FPS = 24;
+        composerFrameMs = 1000 / COMPOSER_CAPTURE_FPS;
+        drawFrame = () => {
+          // Draw shared display stream as the base layer.
+          try {
+            cctx.drawImage(displayVideo, 0, 0, composer.width, composer.height);
+          } catch {
+            cctx.fillStyle = "#000";
+            cctx.fillRect(0, 0, composer.width, composer.height);
+          }
+
+          // Overlay lecturer camera bubble on top of the shared display.
+          const stageEl = stageRef.current;
+          const bubble = cameraBubbleRef.current;
+          const video = camPreviewRef.current;
+          if (!stageEl || !bubble || !video || video.readyState < 2) return;
+          const sRect = stageEl.getBoundingClientRect();
+          const bRect = bubble.getBoundingClientRect();
+          const dpr = composer.width / sRect.width;
+          const dx = (bRect.left - sRect.left) * dpr;
+          const dy = (bRect.top - sRect.top) * dpr;
+          const dw = bRect.width * dpr;
+          const dh = bRect.height * dpr;
+
+          cctx.save();
+          const sh = shapeRef.current;
+          if (sh === "circle") {
+            const cx = dx + dw / 2;
+            const cy = dy + dh / 2;
+            const r = Math.min(dw, dh) / 2;
+            cctx.beginPath();
+            cctx.arc(cx, cy, r, 0, Math.PI * 2);
+            cctx.closePath();
+          } else if (sh === "none" || sh === "rectangle") {
+            cctx.beginPath();
+            cctx.rect(dx, dy, dw, dh);
+          } else {
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+          }
+          cctx.clip();
+          try {
+            if (mirrorRef.current) {
+              cctx.translate(dx + dw, dy);
+              cctx.scale(-1, 1);
+              cctx.drawImage(video, 0, 0, dw, dh);
+            } else {
+              cctx.drawImage(video, dx, dy, dw, dh);
+            }
+          } catch {
+            /* ignore */
+          }
+          cctx.restore();
+        };
+
+        const composerStream = composer.captureStream(COMPOSER_CAPTURE_FPS);
+        composerStreamRef.current = composerStream;
+        videoTracks = composerStream.getVideoTracks();
       }
 
       // Feed the mic track directly into MediaRecorder. This is more reliable
@@ -358,15 +437,6 @@ export const LectureRecorderBar = ({
       if (withMic && audioTracks.length === 0) {
         toast.error("Microphone was not attached to the recording stream");
       }
-      if (captureSource === "display" && videoTracks[0]) {
-        videoTracks[0].addEventListener("ended", () => {
-          onDisplayPreviewStream?.(null);
-          if (recorderRef.current?.state === "recording") {
-            recorderRef.current.stop();
-          }
-        });
-      }
-
       const mimeType = pickMimeType();
       const videoBitsPerSecond =
         outW >= 2400 ? 14_000_000 : outW >= 1920 ? 12_000_000 : 9_000_000;
