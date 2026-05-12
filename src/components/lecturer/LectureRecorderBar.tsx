@@ -254,6 +254,7 @@ export const LectureRecorderBar = ({
             cctx.arc(cx, cy, r, 0, Math.PI * 2);
             cctx.closePath();
           } else if (sh === "none") {
+            // No geometric mask in "none" mode; use raw cutout stream.
             cctx.beginPath();
             cctx.rect(dx, dy, dw, dh);
           } else if (sh === "rectangle") {
@@ -667,7 +668,10 @@ export const LectureRecorderBar = ({
                   <Button
                     size="sm"
                     variant={shape === "none" ? "default" : "outline"}
-                    onClick={() => setShape("none")}
+                    onClick={() => {
+                      setShape("none");
+                      setBgMode("cutout");
+                    }}
                     title="No frame"
                   >
                     None
@@ -719,6 +723,7 @@ export const LectureRecorderBar = ({
           width={bubbleWidth}
           onWidthChange={setBubbleWidth}
           mirror={mirror}
+          cutoutMode={bgMode === "cutout"}
         />
       )}
     </>
@@ -754,8 +759,9 @@ const DraggableCameraBubble = forwardRef<
     width: number;
     onWidthChange: (w: number) => void;
     mirror: boolean;
+    cutoutMode: boolean;
   }
->(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror }, ref) => {
+>(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror, cutoutMode }, ref) => {
   const [pos, setPos] = useState(() => ({
     x: window.innerWidth - 280,
     y: window.innerHeight - 240,
@@ -819,7 +825,7 @@ const DraggableCameraBubble = forwardRef<
           autoPlay
           muted
           playsInline
-          className="w-full h-full object-cover bg-black pointer-events-none"
+          className={`w-full h-full object-cover pointer-events-none ${cutoutMode ? "bg-transparent" : "bg-black"}`}
           style={mirror ? { transform: "scaleX(-1)" } : undefined}
         />
       ) : (
