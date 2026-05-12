@@ -57,6 +57,8 @@ type Props = {
   onNextPage: () => void;
 };
 
+type CaptureSource = "workspace" | "display";
+
 /**
  * Floating recorder toolbar for the Lecturer workspace.
  *
@@ -83,6 +85,7 @@ export const LectureRecorderBar = ({
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [captureSource, setCaptureSource] = useState<CaptureSource>("workspace");
 
   // Camera appearance options
   const [bgMode, setBgMode] = useState<BackgroundMode>("none");
@@ -95,6 +98,7 @@ export const LectureRecorderBar = ({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const composerStreamRef = useRef<MediaStream | null>(null);
   /** requestAnimationFrame id for composer redraw (syncs with display refresh for smoother camera bubble). */
@@ -139,8 +143,10 @@ export const LectureRecorderBar = ({
       composerDrawRafRef.current = null;
     }
     composerStreamRef.current?.getTracks().forEach((t) => t.stop());
+    displayStreamRef.current?.getTracks().forEach((t) => t.stop());
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     composerStreamRef.current = null;
+    displayStreamRef.current = null;
     micStreamRef.current = null;
   };
 
@@ -157,37 +163,43 @@ export const LectureRecorderBar = ({
   };
 
   const start = async () => {
-    const stage = stageRef.current;
-    const pdf = pdfCanvasRef.current;
-    if (!stage || !pdf) {
-      toast.error("PDF stage not ready");
-      return;
-    }
     try {
+      const stage = stageRef.current;
+      const pdf = pdfCanvasRef.current;
       // Composer resolution: ~2× CSS width for sharp slides, capped well below 4K.
       // Full-width 4K compositing every rAF frame melts the GPU/CPU after a few seconds.
-      const MAX_OUTPUT_WIDTH = 2560;
-      const MIN_OUTPUT_WIDTH = 1280;
-      const stageRect = stage.getBoundingClientRect();
-      const stageAspect = stageRect.width / stageRect.height;
-      let outW = Math.round(stageRect.width * 2);
-      outW = Math.min(MAX_OUTPUT_WIDTH, Math.max(MIN_OUTPUT_WIDTH, outW));
-      if (outW % 2 !== 0) outW += 1;
-      const outH = Math.round(outW / stageAspect / 2) * 2; // even number for codecs
-      const composer = document.createElement("canvas");
-      composer.width = outW;
-      composer.height = outH;
-      composerCanvasRef.current = composer;
-      const cctx = composer.getContext("2d", { alpha: false })!;
-      cctx.imageSmoothingEnabled = true;
-      cctx.imageSmoothingQuality = "medium";
+      let videoTracks: MediaStreamTrack[] = [];
+      let outW = 1920;
+      let composerFrameMs = 1000 / 24;
+      let drawFrame: (() => void) | null = null;
 
-      const drawFrame = () => {
-        const stageEl = stageRef.current;
-        if (!stageEl) return;
-        const sRect = stageEl.getBoundingClientRect();
-        // Scale factor from CSS px (stage) → composer px.
-        const dpr = composer.width / sRect.width;
+      if (captureSource === "workspace") {
+        if (!stage || !pdf) {
+          toast.error("PDF stage not ready");
+          return;
+        }
+        const MAX_OUTPUT_WIDTH = 2560;
+        const MIN_OUTPUT_WIDTH = 1280;
+        const stageRect = stage.getBoundingClientRect();
+        const stageAspect = stageRect.width / stageRect.height;
+        outW = Math.round(stageRect.width * 2);
+        outW = Math.min(MAX_OUTPUT_WIDTH, Math.max(MIN_OUTPUT_WIDTH, outW));
+        if (outW % 2 !== 0) outW += 1;
+        const outH = Math.round(outW / stageAspect / 2) * 2; // even number for codecs
+        const composer = document.createElement("canvas");
+        composer.width = outW;
+        composer.height = outH;
+        composerCanvasRef.current = composer;
+        const cctx = composer.getContext("2d", { alpha: false })!;
+        cctx.imageSmoothingEnabled = true;
+        cctx.imageSmoothingQuality = "medium";
+
+        drawFrame = () => {
+          const stageEl = stageRef.current;
+          if (!stageEl) return;
+          const sRect = stageEl.getBoundingClientRect();
+          // Scale factor from CSS px (stage) → composer px.
+          const dpr = composer.width / sRect.width;
 
         // Background
         cctx.fillStyle = "#000";
@@ -284,14 +296,27 @@ export const LectureRecorderBar = ({
         }
 
         
-      };
+        };
 
-      // Match encode cadence: compositing more often than this wastes CPU (main cause of
-      // freezes ~5–10s into a session when rAF runs at display refresh rate).
-      const COMPOSER_CAPTURE_FPS = 24;
-      const composerFrameMs = 1000 / COMPOSER_CAPTURE_FPS;
-      const composerStream = composer.captureStream(COMPOSER_CAPTURE_FPS);
-      composerStreamRef.current = composerStream;
+        // Match encode cadence: compositing more often than this wastes CPU (main cause of
+        // freezes ~5–10s into a session when rAF runs at display refresh rate).
+        const COMPOSER_CAPTURE_FPS = 24;
+        composerFrameMs = 1000 / COMPOSER_CAPTURE_FPS;
+        const composerStream = composer.captureStream(COMPOSER_CAPTURE_FPS);
+        composerStreamRef.current = composerStream;
+        videoTracks = composerStream.getVideoTracks();
+      } else {
+        // Browser/native prompt lets user choose full screen, window, or tab.
+        const display = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            frameRate: { ideal: 30, max: 30 },
+          },
+          audio: false,
+        });
+        displayStreamRef.current = display;
+        videoTracks = display.getVideoTracks();
+        outW = display.getVideoTracks()[0]?.getSettings().width ?? 1920;
+      }
 
       // Feed the mic track directly into MediaRecorder. This is more reliable
       // than routing through an AudioContext for a single-input lecture setup,
@@ -318,13 +343,17 @@ export const LectureRecorderBar = ({
         }
       }
 
-      const tracks: MediaStreamTrack[] = [
-        ...composerStream.getVideoTracks(),
-        ...audioTracks,
-      ];
+      const tracks: MediaStreamTrack[] = [...videoTracks, ...audioTracks];
       const stream = new MediaStream(tracks);
       if (withMic && audioTracks.length === 0) {
         toast.error("Microphone was not attached to the recording stream");
+      }
+      if (captureSource === "display" && videoTracks[0]) {
+        videoTracks[0].addEventListener("ended", () => {
+          if (recorderRef.current?.state === "recording") {
+            recorderRef.current.stop();
+          }
+        });
       }
 
       const mimeType = pickMimeType();
@@ -348,7 +377,7 @@ export const LectureRecorderBar = ({
       let lastComposeAt = 0;
       const composerDrawLoop = () => {
         composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
-        if (recorderRef.current?.state !== "recording") return;
+        if (!drawFrame || recorderRef.current?.state !== "recording") return;
         const now = performance.now();
         if (now - lastComposeAt < composerFrameMs - 0.75) return;
         lastComposeAt = now;
@@ -357,8 +386,10 @@ export const LectureRecorderBar = ({
 
       // Smaller chunks reduce RAM spikes during long WebM muxing in the tab.
       recorder.start(750);
-      drawFrame();
-      composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
+      if (drawFrame) {
+        drawFrame();
+        composerDrawRafRef.current = requestAnimationFrame(composerDrawLoop);
+      }
 
       setRecording(true);
       setPaused(false);
@@ -411,6 +442,29 @@ export const LectureRecorderBar = ({
     <>
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
         <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-classroom-surface border border-classroom-border shadow-[var(--shadow-classroom-lg)]">
+          {!recording && (
+            <>
+              <Button
+                size="sm"
+                variant={captureSource === "workspace" ? "default" : "outline"}
+                onClick={() => setCaptureSource("workspace")}
+                className="h-8"
+                title="Record PDF workspace"
+              >
+                PDF
+              </Button>
+              <Button
+                size="sm"
+                variant={captureSource === "display" ? "default" : "outline"}
+                onClick={() => setCaptureSource("display")}
+                className="h-8"
+                title="Record screen/window/tab"
+              >
+                Screen
+              </Button>
+              <div className="w-px h-6 bg-classroom-border mx-1" />
+            </>
+          )}
           {/* Slide navigation */}
           <Button
             size="icon"
