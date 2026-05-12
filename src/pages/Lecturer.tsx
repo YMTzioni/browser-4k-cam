@@ -31,11 +31,13 @@ type LoadedPdf = {
 const Lecturer = () => {
   const [workspaceMode, setWorkspaceMode] = useState<"pdf" | "window" | null>(null);
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
+  const [displayPreviewStream, setDisplayPreviewStream] = useState<MediaStream | null>(null);
   const [page, setPage] = useState(1);
   const [annotateActive, setAnnotateActive] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const displayPreviewRef = useRef<HTMLVideoElement | null>(null);
   const annotationRef = useRef<AnnotationOverlayHandle | null>(null);
   const renderTaskRef = useRef<pdfjsLib.RenderTask | null>(null);
 
@@ -101,6 +103,17 @@ const Lecturer = () => {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  useEffect(() => {
+    const video = displayPreviewRef.current;
+    if (!video) return;
+    if (!displayPreviewStream) {
+      video.srcObject = null;
+      return;
+    }
+    video.srcObject = displayPreviewStream;
+    video.play().catch(() => {});
+  }, [displayPreviewStream]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -260,10 +273,22 @@ const Lecturer = () => {
               {workspaceMode === "pdf" && pdf ? (
                 <canvas ref={canvasRef} className="shadow-2xl bg-white max-w-full max-h-full" />
               ) : (
-                <div className="text-center text-classroom-muted-foreground">
-                  <p className="text-sm">מצב הקלטת חלון/מסך מוכן.</p>
-                  <p className="text-xs mt-1">לחץ Record ובחר חלון/כרטיסייה מהדפדפן.</p>
-                </div>
+                <>
+                  {displayPreviewStream ? (
+                    <video
+                      ref={displayPreviewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-contain bg-black"
+                    />
+                  ) : (
+                    <div className="text-center text-classroom-muted-foreground">
+                      <p className="text-sm">מצב הקלטת חלון/מסך מוכן.</p>
+                      <p className="text-xs mt-1">לחץ Record ובחר חלון/כרטיסייה מהדפדפן.</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <p className="text-xs text-classroom-muted-foreground mt-2 text-center">
@@ -291,6 +316,7 @@ const Lecturer = () => {
           onPrevPage={() => setPage((p) => Math.max(1, p - 1))}
           onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
           initialCaptureSource={workspaceMode === "window" ? "display" : "workspace"}
+          onDisplayPreviewStream={setDisplayPreviewStream}
         />
       )}
     </main>

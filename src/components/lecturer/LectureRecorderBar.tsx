@@ -56,6 +56,7 @@ type Props = {
   onPrevPage: () => void;
   onNextPage: () => void;
   initialCaptureSource?: CaptureSource;
+  onDisplayPreviewStream?: (stream: MediaStream | null) => void;
 };
 
 type CaptureSource = "workspace" | "display";
@@ -81,6 +82,7 @@ export const LectureRecorderBar = ({
   onPrevPage,
   onNextPage,
   initialCaptureSource = "workspace",
+  onDisplayPreviewStream,
 }: Props) => {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -153,6 +155,7 @@ export const LectureRecorderBar = ({
     composerStreamRef.current = null;
     displayStreamRef.current = null;
     micStreamRef.current = null;
+    onDisplayPreviewStream?.(null);
   };
 
   // Keep recording output in WebM only.
@@ -320,6 +323,7 @@ export const LectureRecorderBar = ({
           audio: false,
         });
         displayStreamRef.current = display;
+        onDisplayPreviewStream?.(display);
         videoTracks = display.getVideoTracks();
         outW = display.getVideoTracks()[0]?.getSettings().width ?? 1920;
       }
@@ -356,6 +360,7 @@ export const LectureRecorderBar = ({
       }
       if (captureSource === "display" && videoTracks[0]) {
         videoTracks[0].addEventListener("ended", () => {
+          onDisplayPreviewStream?.(null);
           if (recorderRef.current?.state === "recording") {
             recorderRef.current.stop();
           }
