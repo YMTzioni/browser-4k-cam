@@ -27,6 +27,18 @@ import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
 
 export type CameraShape = "rounded" | "circle" | "rectangle" | "none";
 
+const DEFAULT_BUBBLE_WIDTH = 320;
+const BUBBLE_CORNER_MARGIN = 16;
+
+const bubbleBottomLeftPos = (width: number, shape: CameraShape) => {
+  const aspect = shape === "circle" ? 1 : 16 / 9;
+  const height = width / aspect;
+  return {
+    x: BUBBLE_CORNER_MARGIN,
+    y: Math.max(BUBBLE_CORNER_MARGIN, window.innerHeight - height - BUBBLE_CORNER_MARGIN),
+  };
+};
+
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
   const sec = (s % 60).toString().padStart(2, "0");
@@ -95,10 +107,10 @@ export const LectureRecorderBar = ({
   }, [initialCaptureSource]);
 
   // Camera appearance options
-  const [bgMode, setBgMode] = useState<BackgroundMode>("none");
+  const [bgMode, setBgMode] = useState<BackgroundMode>("cutout");
   const [blurAmount, setBlurAmount] = useState(12);
-  const [shape, setShape] = useState<CameraShape>("rounded");
-  const [bubbleWidth, setBubbleWidth] = useState(240);
+  const [shape, setShape] = useState<CameraShape>("none");
+  const [bubbleWidth, setBubbleWidth] = useState(DEFAULT_BUBBLE_WIDTH);
   const [mirror, setMirror] = useState(true);
   const [autoCenter, setAutoCenter] = useState(true);
 
@@ -842,10 +854,7 @@ const DraggableCameraBubble = forwardRef<
     cutoutMode: boolean;
   }
 >(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror, cutoutMode }, ref) => {
-  const [pos, setPos] = useState(() => ({
-    x: window.innerWidth - 280,
-    y: window.innerHeight - 240,
-  }));
+  const [pos, setPos] = useState(() => bubbleBottomLeftPos(DEFAULT_BUBBLE_WIDTH, "none"));
   const draggingRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizingRef = useRef<{ startX: number; startW: number } | null>(null);
 
