@@ -38,6 +38,8 @@ interface Options {
   backgroundImageUrl?: string | null;
   blurAmount?: number; // px
   autoCenter?: boolean;
+  /** When set, only this camera is used ({ exact: deviceId }). */
+  deviceId?: string | null;
 }
 
 type FaceBox = { cx: number; cy: number; bw: number; bh: number };
@@ -122,6 +124,7 @@ export const useCameraStream = ({
   backgroundImageUrl,
   blurAmount = 12,
   autoCenter = false,
+  deviceId = null,
 }: Options) => {
   const [rawStream, setRawStream] = useState<MediaStream | null>(null);
   const [processedStream, setProcessedStream] = useState<MediaStream | null>(null);
@@ -139,6 +142,8 @@ export const useCameraStream = ({
   const modeRef = useRef<BackgroundMode>(backgroundMode);
   const blurRef = useRef<number>(blurAmount);
   const autoCenterRef = useRef<boolean>(autoCenter);
+  const deviceIdRef = useRef<string | null>(deviceId);
+  const openingRef = useRef<Promise<MediaStream | null> | null>(null);
 
   useEffect(() => {
     modeRef.current = backgroundMode;
@@ -149,6 +154,9 @@ export const useCameraStream = ({
   useEffect(() => {
     autoCenterRef.current = autoCenter;
   }, [autoCenter]);
+  useEffect(() => {
+    deviceIdRef.current = deviceId;
+  }, [deviceId]);
 
   const getCameraErrorMessage = useCallback(async (e: unknown) => {
     const err = e as { name?: string; message?: string };
@@ -230,31 +238,59 @@ export const useCameraStream = ({
       return null;
     }
 
-    if (rawStreamRef.current) {
-      setError(null);
-      return rawStreamRef.current;
+    if (openingRef.current) {
+      return openingRef.current;
     }
 
-    try {
-      setError(null);
+    openingRef.current = (async () => {
+      try {
+        setError(null);
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
+        const wantedId = deviceIdRef.current ?? undefined;
+        const existing = rawStreamRef.current;
+        if (existing) {
+          const activeId = existing.getVideoTracks()[0]?.getSettings().deviceId;
+          if (!wantedId || activeId === wantedId) {
+            return existing;
+          }
+          existing.getVideoTracks().forEach((track) => track.stop());
+          rawStreamRef.current = null;
+          setRawStream(null);
+        }
+
+        const video: MediaTrackConstraints = {
           width: { ideal: 1280 },
           height: { ideal: 720 },
           frameRate: { ideal: 30 },
-        },
-      });
+        };
+        if (wantedId) {
+          video.deviceId = { exact: wantedId };
+        }
 
-      rawStreamRef.current = stream;
-      setRawStream(stream);
-      return stream;
-    } catch (e: unknown) {
-      console.error(e);
-      setError(await getCameraErrorMessage(e));
-      return null;
-    }
+        const stream = await navigator.mediaDevices.getUserMedia({ video });
+
+        rawStreamRef.current = stream;
+        setRawStream(stream);
+        return stream;
+      } catch (e: unknown) {
+        console.error(e);
+        setError(await getCameraErrorMessage(e));
+        return null;
+      } finally {
+        openingRef.current = null;
+      }
+    })();
+
+    return openingRef.current;
   }, [getCameraErrorMessage]);
+
+  useEffect(() => {
+    if (!deviceId || !rawStreamRef.current) return;
+    const activeId = rawStreamRef.current.getVideoTracks()[0]?.getSettings().deviceId;
+    if (activeId && activeId !== deviceId) {
+      void requestCamera();
+    }
+  }, [deviceId, requestCamera]);
 
   useEffect(() => {
     if (!rawStream) {

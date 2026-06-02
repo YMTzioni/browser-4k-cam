@@ -24,6 +24,7 @@ import {
   Volume2,
 } from "lucide-react";
 import { useCameraStream, type BackgroundMode } from "@/hooks/useCameraStream";
+import { createRecordingSink, type RecordingSink } from "@/lib/recordingSink";
 
 export type CameraShape = "rounded" | "circle" | "rectangle" | "none";
 
@@ -39,19 +40,19 @@ const bubbleBottomLeftPos = (width: number, shape: CameraShape) => {
   };
 };
 
+/** Wait two frames so visibility:hidden applies before getDisplayMedia captures the tab. */
+const waitForPaint = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+
 const formatTime = (s: number) => {
   const m = Math.floor(s / 60).toString().padStart(2, "0");
   const sec = (s % 60).toString().padStart(2, "0");
   return `${m}:${sec}`;
 };
 
-type CameraBubblePosition = {
-  x: number;
-  y: number;
-  width: number;
-  /** Bubble bounding box in viewport CSS pixels (for compositing). */
-  rect: DOMRect | null;
-};
+type RecorderStatus = "idle" | "starting" | "recording" | "stopping" | "failed";
 
 type Props = {
   showCamera: boolean;
@@ -69,6 +70,8 @@ type Props = {
   onNextPage: () => void;
   initialCaptureSource?: CaptureSource;
   onDisplayPreviewStream?: (stream: MediaStream | null) => void;
+  /** Fired when display capture is preparing/recording so the stage can hide live preview (avoids tab-in-tab mirror + duplicate camera in capture). */
+  onDisplayCaptureActive?: (active: boolean) => void;
 };
 
 type CaptureSource = "workspace" | "display";
@@ -95,13 +98,19 @@ export const LectureRecorderBar = ({
   onNextPage,
   initialCaptureSource = "workspace",
   onDisplayPreviewStream,
+  onDisplayCaptureActive,
 }: Props) => {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [withMic, setWithMic] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [recorderStatus, setRecorderStatus] = useState<RecorderStatus>("idle");
+  const [savedDirectly, setSavedDirectly] = useState(false);
+  const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [captureSource, setCaptureSource] = useState<CaptureSource>(initialCaptureSource);
+  /** Hide bubble from the live tab/window while display capture runs — composer draws it once. */
+  const [hideBubbleForDisplayCapture, setHideBubbleForDisplayCapture] = useState(false);
   useEffect(() => {
     setCaptureSource(initialCaptureSource);
   }, [initialCaptureSource]);
@@ -113,9 +122,11 @@ export const LectureRecorderBar = ({
   const [bubbleWidth, setBubbleWidth] = useState(DEFAULT_BUBBLE_WIDTH);
   const [mirror, setMirror] = useState(true);
   const [autoCenter, setAutoCenter] = useState(true);
+  const [cameraDeviceId, setCameraDeviceId] = useState<string | undefined>(undefined);
+  const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const sinkRef = useRef<RecordingSink | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const displayStreamRef = useRef<MediaStream | null>(null);
   const composerCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -133,6 +144,7 @@ export const LectureRecorderBar = ({
     backgroundMode: bgMode,
     blurAmount,
     autoCenter,
+    deviceId: cameraDeviceId ?? null,
   });
   const camStream = processedStream ?? rawStream;
   const camPreviewRef = useRef<HTMLVideoElement | null>(null);
@@ -141,6 +153,32 @@ export const LectureRecorderBar = ({
     if (showCamera) requestCamera();
     else stopCamera();
   }, [showCamera, requestCamera, stopCamera]);
+
+  useEffect(() => {
+    if (!showCamera) {
+      setCameraDevices([]);
+      return;
+    }
+    const refresh = async () => {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        setCameraDevices(list.filter((device) => device.kind === "videoinput"));
+      } catch {
+        /* ignore */
+      }
+    };
+    void refresh();
+    navigator.mediaDevices?.addEventListener("devicechange", refresh);
+    return () => navigator.mediaDevices?.removeEventListener("devicechange", refresh);
+  }, [showCamera, camStream]);
+
+  useEffect(() => {
+    const track = camStream?.getVideoTracks()[0];
+    const activeId = track?.getSettings().deviceId;
+    if (activeId) {
+      setCameraDeviceId((current) => current ?? activeId);
+    }
+  }, [camStream]);
 
   useEffect(() => {
     if (camError) toast.error(camError, { duration: 5000 });
@@ -167,7 +205,29 @@ export const LectureRecorderBar = ({
     composerStreamRef.current = null;
     displayStreamRef.current = null;
     micStreamRef.current = null;
+    setHideBubbleForDisplayCapture(false);
+    onDisplayCaptureActive?.(false);
     onDisplayPreviewStream?.(null);
+    if (sinkRef.current) {
+      void sinkRef.current.abort().catch(() => {});
+      sinkRef.current = null;
+    }
+  };
+
+  const finalizeSink = async () => {
+    const sink = sinkRef.current;
+    sinkRef.current = null;
+    if (!sink) return null;
+    const result = await sink.finalize();
+    setSavedDirectly(result.savedToFile);
+    setSavedFileName(sink.savedFileName);
+    if (result.previewUrl) {
+      setPreviewUrl((oldUrl) => {
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        return result.previewUrl;
+      });
+    }
+    return result;
   };
 
   // Keep recording output in WebM only.
@@ -184,6 +244,7 @@ export const LectureRecorderBar = ({
 
   const start = async () => {
     try {
+      setRecorderStatus("starting");
       const stage = stageRef.current;
       const pdf = pdfCanvasRef.current;
       // Composer resolution: ~2× CSS width for sharp slides, capped well below 4K.
@@ -195,6 +256,7 @@ export const LectureRecorderBar = ({
 
       if (captureSource === "workspace") {
         if (!stage || !pdf) {
+          setRecorderStatus("idle");
           toast.error("PDF stage not ready");
           return;
         }
@@ -327,6 +389,12 @@ export const LectureRecorderBar = ({
         composerStreamRef.current = composerStream;
         videoTracks = composerStream.getVideoTracks();
       } else {
+        // Hide bubble + stage preview before capture so the shared tab/window does not
+        // already contain the camera (composer adds a single overlay on top).
+        setHideBubbleForDisplayCapture(true);
+        onDisplayCaptureActive?.(true);
+        await waitForPaint();
+
         // Browser/native prompt lets user choose full screen, window, or tab.
         const display = await navigator.mediaDevices.getDisplayMedia({
           video: {
@@ -372,17 +440,17 @@ export const LectureRecorderBar = ({
           }
 
           // Overlay lecturer camera bubble on top of the shared display.
-          const stageEl = stageRef.current;
           const bubble = cameraBubbleRef.current;
           const video = camPreviewRef.current;
-          if (!stageEl || !bubble || !video || video.readyState < 2) return;
-          const sRect = stageEl.getBoundingClientRect();
+          if (!bubble || !video || video.readyState < 2) return;
           const bRect = bubble.getBoundingClientRect();
-          const dpr = composer.width / sRect.width;
-          const dx = (bRect.left - sRect.left) * dpr;
-          const dy = (bRect.top - sRect.top) * dpr;
-          const dw = bRect.width * dpr;
-          const dh = bRect.height * dpr;
+          // Map viewport CSS px → capture px (full display frame, not just the stage).
+          const scaleX = composer.width / window.innerWidth;
+          const scaleY = composer.height / window.innerHeight;
+          const dx = bRect.left * scaleX;
+          const dy = bRect.top * scaleY;
+          const dw = bRect.width * scaleX;
+          const dh = bRect.height * scaleY;
 
           cctx.save();
           const sh = shapeRef.current;
@@ -397,7 +465,7 @@ export const LectureRecorderBar = ({
             cctx.beginPath();
             cctx.rect(dx, dy, dw, dh);
           } else {
-            roundRectPath(cctx, dx, dy, dw, dh, 12 * dpr);
+            roundRectPath(cctx, dx, dy, dw, dh, 12 * scaleX);
           }
           cctx.clip();
           try {
@@ -450,6 +518,17 @@ export const LectureRecorderBar = ({
         toast.error("Microphone was not attached to the recording stream");
       }
       const mimeType = pickMimeType();
+      const sink = await createRecordingSink({
+        mimeType,
+        fileNamePrefix: "lecture",
+      });
+      sinkRef.current = sink;
+      setSavedDirectly(false);
+      setSavedFileName(null);
+      setPreviewUrl((oldUrl) => {
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        return null;
+      });
       const videoBitsPerSecond =
         outW >= 2400 ? 14_000_000 : outW >= 1920 ? 12_000_000 : 9_000_000;
       const recorder = new MediaRecorder(stream, {
@@ -457,12 +536,19 @@ export const LectureRecorderBar = ({
         videoBitsPerSecond,
         audioBitsPerSecond: 192_000,
       });
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data);
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        setPreviewUrl(URL.createObjectURL(blob));
-        cleanup();
+      recorder.ondataavailable = (e) => sink.pushChunk(e.data);
+      recorder.onstop = async () => {
+        try {
+          const result = await finalizeSink();
+          setRecorderStatus("idle");
+          toast.success(result?.savedToFile ? "Recording finalized to file" : "Recording saved");
+        } catch (err) {
+          console.error(err);
+          setRecorderStatus("failed");
+          toast.error("Recording finished but file finalization failed");
+        } finally {
+          cleanup();
+        }
       };
 
       recorderRef.current = recorder;
@@ -486,12 +572,19 @@ export const LectureRecorderBar = ({
 
       setRecording(true);
       setPaused(false);
+      setRecorderStatus("recording");
       setElapsed(0);
-      setPreviewUrl(null);
       timerRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-      toast.success("Recording started");
+      toast.success(
+        sink.mode === "file"
+          ? "Recording started — saving directly to file"
+          : "Recording started — browser fallback stores chunks in memory",
+      );
     } catch (err) {
       console.error(err);
+      setRecorderStatus("failed");
+      await sinkRef.current?.abort().catch(() => {});
+      sinkRef.current = null;
       toast.error("Could not start recording");
       cleanup();
     }
@@ -512,11 +605,13 @@ export const LectureRecorderBar = ({
   };
 
   const stop = () => {
+    if (recorderStatus === "stopping") return;
+    setRecorderStatus("stopping");
     recorderRef.current?.stop();
     setRecording(false);
     setPaused(false);
     if (timerRef.current) window.clearInterval(timerRef.current);
-    toast.success("Recording saved");
+    toast.message("Saving recording...");
   };
 
   const triggerDownload = (url: string, ext: string) => {
@@ -589,6 +684,7 @@ export const LectureRecorderBar = ({
             <Button
               onClick={start}
               size="sm"
+              disabled={recorderStatus === "starting" || recorderStatus === "stopping"}
               className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
             >
               <Circle className="size-4" fill="currentColor" /> Record
@@ -603,7 +699,7 @@ export const LectureRecorderBar = ({
                 {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
                 {paused ? "Resume" : "Pause"}
               </Button>
-              <Button onClick={stop} size="sm" variant="destructive" className="gap-2">
+              <Button onClick={stop} size="sm" variant="destructive" className="gap-2" disabled={recorderStatus === "stopping"}>
                 <Square className="size-4" fill="currentColor" /> Stop
               </Button>
             </>
@@ -676,6 +772,26 @@ export const LectureRecorderBar = ({
               </Button>
             </PopoverTrigger>
             <PopoverContent side="top" align="end" className="classroom-theme w-72 p-4 space-y-4">
+              {cameraDevices.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    מצלמה
+                  </Label>
+                  <select
+                    className="w-full text-xs bg-background border border-border rounded-md px-2 py-1.5"
+                    value={cameraDeviceId ?? cameraDevices[0]?.deviceId ?? ""}
+                    disabled={recording}
+                    onChange={(e) => setCameraDeviceId(e.target.value)}
+                  >
+                    {cameraDevices.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Camera ${device.deviceId.slice(0, 6)}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Background
@@ -789,17 +905,23 @@ export const LectureRecorderBar = ({
             </PopoverContent>
           </Popover>
 
-          {previewUrl && !recording && (
+          {(previewUrl || savedDirectly) && !recording && (
             <>
               <div className="w-px h-6 bg-classroom-border mx-1" />
-              <Button
-                size="sm"
-                onClick={downloadWebm}
-                className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
-                title="Download recording as WebM"
-              >
-                <Download className="size-4" /> WebM
-              </Button>
+              {previewUrl ? (
+                <Button
+                  size="sm"
+                  onClick={downloadWebm}
+                  className="gap-2 bg-classroom hover:bg-classroom/90 text-classroom-foreground shadow-[var(--shadow-classroom)]"
+                  title="Download recording as WebM"
+                >
+                  <Download className="size-4" /> WebM
+                </Button>
+              ) : (
+                <span className="text-xs text-classroom-surface-foreground px-2">
+                  נשמר ישירות לקובץ: {savedFileName ?? "lecture.webm"}
+                </span>
+              )}
             </>
           )}
         </div>
@@ -816,6 +938,7 @@ export const LectureRecorderBar = ({
           onWidthChange={setBubbleWidth}
           mirror={mirror}
           cutoutMode={bgMode === "cutout"}
+          hiddenForCapture={hideBubbleForDisplayCapture}
         />
       )}
     </>
@@ -852,8 +975,10 @@ const DraggableCameraBubble = forwardRef<
     onWidthChange: (w: number) => void;
     mirror: boolean;
     cutoutMode: boolean;
+    /** Keep layout for compositor but hide from screen capture (display mode). */
+    hiddenForCapture?: boolean;
   }
->(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror, cutoutMode }, ref) => {
+>(({ videoRef, hasStream, recording, shape, width, onWidthChange, mirror, cutoutMode, hiddenForCapture }, ref) => {
   const [pos, setPos] = useState(() => bubbleBottomLeftPos(DEFAULT_BUBBLE_WIDTH, "none"));
   const draggingRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizingRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -906,7 +1031,13 @@ const DraggableCameraBubble = forwardRef<
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       className={`fixed z-50 cursor-grab active:cursor-grabbing select-none ${shape === "none" ? "" : "overflow-hidden shadow-2xl ring-2 ring-primary"} ${shapeClass}`}
-      style={{ left: pos.x, top: pos.y, width, height }}
+      style={{
+        left: pos.x,
+        top: pos.y,
+        width,
+        height,
+        visibility: hiddenForCapture ? "hidden" : "visible",
+      }}
     >
       {hasStream ? (
         <video

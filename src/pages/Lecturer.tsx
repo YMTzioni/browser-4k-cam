@@ -32,6 +32,7 @@ const Lecturer = () => {
   const [workspaceMode, setWorkspaceMode] = useState<"pdf" | "window" | null>(null);
   const [pdf, setPdf] = useState<LoadedPdf | null>(null);
   const [displayPreviewStream, setDisplayPreviewStream] = useState<MediaStream | null>(null);
+  const [displayCaptureActive, setDisplayCaptureActive] = useState(false);
   const [page, setPage] = useState(1);
   const [annotateActive, setAnnotateActive] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
@@ -274,7 +275,7 @@ const Lecturer = () => {
                 <canvas ref={canvasRef} className="shadow-2xl bg-white max-w-full max-h-full" />
               ) : (
                 <>
-                  {displayPreviewStream ? (
+                  {displayPreviewStream && !displayCaptureActive ? (
                     <video
                       ref={displayPreviewRef}
                       autoPlay
@@ -282,6 +283,11 @@ const Lecturer = () => {
                       playsInline
                       className="w-full h-full object-contain bg-black"
                     />
+                  ) : displayCaptureActive ? (
+                    <div className="text-center text-classroom-muted-foreground px-6">
+                      <p className="text-sm">הקלטה פעילה</p>
+                      <p className="text-xs mt-1">המצלמה מורכבת לתוך ההקלטה — לא תופיע פעמיים בתוצר.</p>
+                    </div>
                   ) : (
                     <div className="text-center text-classroom-muted-foreground">
                       <p className="text-sm">מצב הקלטת חלון/מסך מוכן.</p>
@@ -317,6 +323,7 @@ const Lecturer = () => {
           onNextPage={() => setPage((p) => Math.min(pdf?.numPages ?? 1, p + 1))}
           initialCaptureSource={workspaceMode === "window" ? "display" : "workspace"}
           onDisplayPreviewStream={setDisplayPreviewStream}
+          onDisplayCaptureActive={setDisplayCaptureActive}
         />
       )}
     </main>

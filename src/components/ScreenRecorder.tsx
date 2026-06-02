@@ -9,9 +9,11 @@ import { toast } from "sonner";
 import { Circle, Square, Download, Monitor, Mic, Video, Camera, PictureInPicture2, Image as ImageIcon, Sparkles, Pencil } from "lucide-react";
 import { useCameraStream, BackgroundMode } from "@/hooks/useCameraStream";
 import { AnnotationOverlay, AnnotationOverlayHandle } from "@/components/lecturer/AnnotationOverlay";
+import { createRecordingSink, type RecordingSink } from "@/lib/recordingSink";
 
 type Resolution = "2160" | "1440" | "1080" | "720";
 type CameraMode = "off" | "overlay" | "only";
+type RecorderStatus = "idle" | "starting" | "recording" | "stopping" | "failed";
 
 const RES_MAP: Record<Resolution, { w: number; h: number; label: string }> = {
   "2160": { w: 3840, h: 2160, label: "4K UHD (3840×2160)" },
@@ -38,6 +40,9 @@ export const ScreenRecorder = () => {
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [recorderStatus, setRecorderStatus] = useState<RecorderStatus>("idle");
+  const [savedDirectly, setSavedDirectly] = useState(false);
+  const [savedFileName, setSavedFileName] = useState<string | null>(null);
   const [pipActive, setPipActive] = useState(false);
   const [annotateActive, setAnnotateActive] = useState(false);
   const annotationRef = useRef<AnnotationOverlayHandle | null>(null);
@@ -60,7 +65,7 @@ export const ScreenRecorder = () => {
   }, [camError]);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const sinkRef = useRef<RecordingSink | null>(null);
   const displayStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const compositeStreamRef = useRef<MediaStream | null>(null);
@@ -134,6 +139,26 @@ export const ScreenRecorder = () => {
     compositeStreamRef.current = null;
     stopCamera();
     closePip();
+    if (sinkRef.current) {
+      void sinkRef.current.abort().catch(() => {});
+      sinkRef.current = null;
+    }
+  };
+
+  const finalizeSink = async () => {
+    const sink = sinkRef.current;
+    sinkRef.current = null;
+    if (!sink) return null;
+    const result = await sink.finalize();
+    setSavedDirectly(result.savedToFile);
+    setSavedFileName(sink.savedFileName);
+    if (result.previewUrl) {
+      setPreviewUrl((oldUrl) => {
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        return result.previewUrl;
+      });
+    }
+    return result;
   };
 
   const pickMimeType = () => {
@@ -209,11 +234,13 @@ export const ScreenRecorder = () => {
 
   const startRecording = async () => {
     try {
+      setRecorderStatus("starting");
       const { w, h } = RES_MAP[resolution];
       const frameRate = Number(fps);
       const cameraRecordStream = cameraMode !== "off" ? await ensureCameraStream() : null;
 
       if (cameraMode !== "off" && !cameraRecordStream) {
+        setRecorderStatus("idle");
         toast.error(camError || "Camera not recognized");
         return;
       }
@@ -303,20 +330,36 @@ export const ScreenRecorder = () => {
       }
 
       const mimeType = pickMimeType();
+      const sink = await createRecordingSink({
+        mimeType,
+        fileNamePrefix: "recording",
+      });
+      sinkRef.current = sink;
+      setSavedDirectly(false);
+      setSavedFileName(null);
+      setPreviewUrl((oldUrl) => {
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        return null;
+      });
       const recorder = new MediaRecorder(recordStream, {
         mimeType,
         videoBitsPerSecond: 8_000_000,
         audioBitsPerSecond: 128_000,
       });
 
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        setPreviewUrl(URL.createObjectURL(blob));
-        stopAll();
+      recorder.ondataavailable = (e) => sink.pushChunk(e.data);
+      recorder.onstop = async () => {
+        try {
+          const result = await finalizeSink();
+          setRecorderStatus("idle");
+          toast.success(result?.savedToFile ? "Recording finalized to file" : "Recording saved");
+        } catch (err) {
+          console.error(err);
+          setRecorderStatus("failed");
+          toast.error("Recording finished but file finalization failed");
+        } finally {
+          stopAll();
+        }
       };
 
       const primaryVideo =
@@ -324,28 +367,38 @@ export const ScreenRecorder = () => {
       primaryVideo?.addEventListener("ended", () => {
         if (recorder.state !== "inactive") recorder.stop();
         setRecording(false);
+        setRecorderStatus("stopping");
         if (timerRef.current) window.clearInterval(timerRef.current);
       });
 
       recorder.start(1000);
       recorderRef.current = recorder;
       setRecording(true);
+      setRecorderStatus("recording");
       setElapsed(0);
-      setPreviewUrl(null);
       timerRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-      toast.success("Recording started — drag the bubble to reposition live");
+      toast.success(
+        sink.mode === "file"
+          ? "Recording started — saving directly to file"
+          : "Recording started — browser fallback stores chunks in memory",
+      );
     } catch (err) {
       console.error(err);
+      setRecorderStatus("failed");
+      await sinkRef.current?.abort().catch(() => {});
+      sinkRef.current = null;
       toast.error("Failed to start recording");
       stopAll();
     }
   };
 
   const stopRecording = () => {
+    if (recorderStatus === "stopping") return;
+    setRecorderStatus("stopping");
     recorderRef.current?.stop();
     setRecording(false);
     if (timerRef.current) window.clearInterval(timerRef.current);
-    toast.success("Recording saved");
+    toast.message("Saving recording...");
   };
 
   const download = () => {
@@ -403,6 +456,7 @@ export const ScreenRecorder = () => {
             <Button
               size="lg"
               onClick={startRecording}
+              disabled={recorderStatus === "starting" || recorderStatus === "stopping"}
               className="bg-[image:var(--gradient-primary)] hover:opacity-90 text-primary-foreground px-10 py-6 text-base font-semibold shadow-[var(--shadow-glow)] transition-all hover:scale-105"
             >
               <Video className="mr-2" /> Start Recording
@@ -412,6 +466,7 @@ export const ScreenRecorder = () => {
               size="lg"
               variant="destructive"
               onClick={stopRecording}
+              disabled={recorderStatus === "stopping"}
               className="px-10 py-6 text-base font-semibold"
             >
               <Square className="mr-2" fill="currentColor" /> Stop Recording
@@ -579,17 +634,27 @@ export const ScreenRecorder = () => {
         </div>
       </Card>
 
-      {previewUrl && (
+      {(previewUrl || savedDirectly) && (
         <Card className="p-6 border-border/50 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
               Preview
             </h2>
-            <Button onClick={download} variant="secondary">
-              <Download className="mr-2 size-4" /> Download .webm
-            </Button>
+            {previewUrl ? (
+              <Button onClick={download} variant="secondary">
+                <Download className="mr-2 size-4" /> Download .webm
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Saved directly: {savedFileName ?? "recording.webm"}
+              </span>
+            )}
           </div>
-          <video src={previewUrl} controls className="w-full rounded-md bg-black aspect-video" />
+          {previewUrl ? (
+            <video src={previewUrl} controls className="w-full rounded-md bg-black aspect-video" />
+          ) : (
+            <div className="text-sm text-muted-foreground">File was written directly during recording.</div>
+          )}
         </Card>
       )}
     </div>
