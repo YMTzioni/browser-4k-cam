@@ -109,6 +109,60 @@ const updateCenterAndCrop = (
   return { sx, sy, cropW, cropH };
 };
 
+/** Cap processing resolution so ML + canvas capture stay real-time on long sessions. */
+const fitCanvasToVideo = (canvas: HTMLCanvasElement, video: HTMLVideoElement, maxWidth: number) => {
+  const vw = video.videoWidth || 1280;
+  const vh = video.videoHeight || 720;
+  const scale = Math.min(1, maxWidth / vw);
+  const w = Math.max(2, Math.round((vw * scale) / 2) * 2);
+  const h = Math.max(2, Math.round((vh * scale) / 2) * 2);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+};
+
+type CropRect = { sx: number; sy: number; cropW: number; cropH: number };
+
+const paintCutoutFrame = (
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  maskCanvas: HTMLCanvasElement,
+  crop: CropRect,
+  outW: number,
+  outH: number,
+) => {
+  const { sx, sy, cropW, cropH } = crop;
+  ctx.save();
+  ctx.clearRect(0, 0, outW, outH);
+  ctx.drawImage(maskCanvas, 0, 0, outW, outH);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, outW, outH);
+  ctx.restore();
+};
+
+const paintBlurFrame = (
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  maskCanvas: HTMLCanvasElement,
+  crop: CropRect,
+  blurPx: number,
+  outW: number,
+  outH: number,
+) => {
+  const { sx, sy, cropW, cropH } = crop;
+  ctx.save();
+  ctx.clearRect(0, 0, outW, outH);
+  ctx.drawImage(maskCanvas, 0, 0, outW, outH);
+  ctx.globalCompositeOperation = "source-in";
+  ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, outW, outH);
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.filter = `blur(${blurPx}px)`;
+  ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, outW, outH);
+  ctx.filter = "none";
+  ctx.restore();
+};
+
 /**
  * Acquires the webcam and optionally applies background blur or replacement
  * via MediaPipe Selfie Segmentation. Returns BOTH the raw stream and a
@@ -321,13 +375,15 @@ export const useCameraStream = ({
         videoElRef.current = video;
 
         const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
+        const maxProcessWidth = backgroundMode === "cutout" ? 640 : 960;
+        fitCanvasToVideo(canvas, video, maxProcessWidth);
         canvasRef.current = canvas;
         const ctx = canvas.getContext("2d")!;
 
         // Keep in line with lecture composer (24fps) to reduce duplicate work and heat.
         const CAPTURE_FPS = 24;
+        const srcW = () => video.videoWidth || canvas.width;
+        const srcH = () => video.videoHeight || canvas.height;
 
         // --- Fast path: no ML — lowest latency (mic vs camera sync). ---
         if (backgroundMode === "none" && !autoCenter) {
@@ -384,28 +440,42 @@ export const useCameraStream = ({
 
           const center = { x: 0.5, y: 0.5, scale: 1 };
           runningRef.current = true;
-          let frame = 0;
-          const tick = async () => {
-            if (!runningRef.current || cancelled) return;
-            if (video.readyState >= 2) {
+          let mlInFlight = false;
+          let lastMlAt = 0;
+          const FACE_ML_FPS = 8;
+          const faceMlInterval = 1000 / FACE_ML_FPS;
+
+          cancelVideoPump = subscribeVideoPump(
+            video,
+            () => {
+              if (video.readyState < 2) return;
               const w = canvas.width;
               const h = canvas.height;
-              if (frame++ % 2 === 0) {
-                try {
-                  await faceDetector.send({ image: video });
-                } catch {
-                  /* ignore */
-                }
-              }
-              const { sx, sy, cropW, cropH } = updateCenterAndCrop(center, faceBoxRef.current, autoCenterRef.current, w, h);
+              const sw = srcW();
+              const sh = srcH();
+              const { sx, sy, cropW, cropH } = updateCenterAndCrop(
+                center,
+                faceBoxRef.current,
+                autoCenterRef.current,
+                sw,
+                sh,
+              );
               ctx.clearRect(0, 0, w, h);
               ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, w, h);
-            }
-            rafRef.current = requestAnimationFrame(() => {
-              void tick();
-            });
-          };
-          tick();
+
+              const now = performance.now();
+              if (mlInFlight || now - lastMlAt < faceMlInterval) return;
+              lastMlAt = now;
+              mlInFlight = true;
+              void faceDetector
+                .send({ image: video })
+                .catch(() => {})
+                .finally(() => {
+                  mlInFlight = false;
+                });
+            },
+            () => runningRef.current && !cancelled,
+          );
 
           const out = canvas.captureStream(CAPTURE_FPS);
           processedStreamRef.current = out;
@@ -420,75 +490,107 @@ export const useCameraStream = ({
           locateFile: (file) =>
             `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
         });
-        segmenter.setOptions({ modelSelection: 1 });
-
-        const FaceDetectionCtor = await loadFaceDetection();
-        if (cancelled) return;
-        const faceDetector = new FaceDetectionCtor({
-          locateFile: (file) =>
-            `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
-        });
-        faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
-        faceDetectorRef.current = faceDetector;
+        // Model 0 is faster; sufficient for lecturer cutout in a small bubble.
+        segmenter.setOptions({ modelSelection: backgroundMode === "cutout" ? 0 : 1 });
 
         const center = { x: 0.5, y: 0.5, scale: 1 };
         const faceBoxRef: { current: FaceBox | null } = { current: null };
+        const maskCanvas = document.createElement("canvas");
+        const maskCtx = maskCanvas.getContext("2d")!;
+        let hasMask = false;
 
-        faceDetector.onResults((results: FaceResults) => {
-          const det = results.detections?.[0];
-          if (!det) {
-            faceBoxRef.current = null;
-            return;
-          }
-          const bb = det.boundingBox as unknown as {
-            xCenter: number;
-            yCenter: number;
-            width: number;
-            height: number;
-          };
-          faceBoxRef.current = {
-            cx: bb.xCenter,
-            cy: bb.yCenter,
-            bw: bb.width,
-            bh: bb.height,
-          };
-        });
+        const useFaceForCenter =
+          autoCenterRef.current && backgroundMode !== "cutout";
+        let faceDetector: FaceDetectionType | null = null;
+        if (useFaceForCenter) {
+          const FaceDetectionCtor = await loadFaceDetection();
+          if (cancelled) return;
+          faceDetector = new FaceDetectionCtor({
+            locateFile: (file) =>
+              `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
+          });
+          faceDetector.setOptions({ model: "short", minDetectionConfidence: 0.5 });
+          faceDetectorRef.current = faceDetector;
+          faceDetector.onResults((results: FaceResults) => {
+            const det = results.detections?.[0];
+            if (!det) {
+              faceBoxRef.current = null;
+              return;
+            }
+            const bb = det.boundingBox as unknown as {
+              xCenter: number;
+              yCenter: number;
+              width: number;
+              height: number;
+            };
+            faceBoxRef.current = {
+              cx: bb.xCenter,
+              cy: bb.yCenter,
+              bw: bb.width,
+              bh: bb.height,
+            };
+          });
+        }
 
         segmenter.onResults((results: Results) => {
           const w = canvas.width;
           const h = canvas.height;
-          const mode = modeRef.current;
-
+          if (maskCanvas.width !== w || maskCanvas.height !== h) {
+            maskCanvas.width = w;
+            maskCanvas.height = h;
+          }
+          const sw = srcW();
+          const sh = srcH();
           const { sx, sy, cropW, cropH } = updateCenterAndCrop(
             center,
             faceBoxRef.current,
-            autoCenterRef.current,
-            w,
-            h,
+            useFaceForCenter,
+            sw,
+            sh,
           );
+          maskCtx.clearRect(0, 0, w, h);
+          maskCtx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
+          hasMask = true;
+        });
+        segmenterRef.current = segmenter;
 
-          ctx.save();
-          ctx.clearRect(0, 0, w, h);
+        runningRef.current = true;
+        let mlInFlight = false;
+        let lastMlAt = 0;
+        const SEGMENT_ML_FPS = backgroundMode === "cutout" ? 12 : 10;
+        const segmentMlInterval = 1000 / SEGMENT_ML_FPS;
+        let lastFaceMlAt = 0;
+        const FACE_ML_FPS = 6;
+
+        const paintSegmentedFrame = () => {
+          if (video.readyState < 2) return;
+          const w = canvas.width;
+          const h = canvas.height;
+          const sw = srcW();
+          const sh = srcH();
+          const crop = updateCenterAndCrop(center, faceBoxRef.current, useFaceForCenter, sw, sh);
+          const mode = modeRef.current;
 
           if (mode === "cutout") {
-            // Keep only the lecturer pixels and leave background transparent.
-            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
-            ctx.globalCompositeOperation = "source-in";
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
-          } else if (mode === "blur") {
-            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
-            ctx.globalCompositeOperation = "source-in";
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+            if (!hasMask) return;
+            paintCutoutFrame(ctx, video, maskCanvas, crop, w, h);
+            return;
+          }
 
-            ctx.globalCompositeOperation = "destination-over";
-            ctx.filter = `blur(${blurRef.current}px)`;
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
-            ctx.filter = "none";
-          } else if (mode === "image" && bgImageRef.current) {
-            ctx.drawImage(results.segmentationMask, sx, sy, cropW, cropH, 0, 0, w, h);
-            ctx.globalCompositeOperation = "source-in";
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+          if (mode === "blur") {
+            if (!hasMask) return;
+            paintBlurFrame(ctx, video, maskCanvas, crop, blurRef.current, w, h);
+            return;
+          }
 
+          if (mode === "image" && bgImageRef.current) {
+            if (!hasMask) return;
+            const { sx, sy, cropW, cropH } = crop;
+            ctx.save();
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(maskCanvas, 0, 0, w, h);
+            ctx.globalCompositeOperation = "source-in";
+            ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, w, h);
             ctx.globalCompositeOperation = "destination-over";
             const img = bgImageRef.current;
             const cr = w / h;
@@ -507,34 +609,37 @@ export const useCameraStream = ({
               dy = (h - dh) / 2;
             }
             ctx.drawImage(img, dx, dy, dw, dh);
-          } else {
-            ctx.drawImage(results.image, sx, sy, cropW, cropH, 0, 0, w, h);
+            ctx.restore();
+            return;
           }
-          ctx.restore();
-        });
-        segmenterRef.current = segmenter;
 
-        runningRef.current = true;
-        let faceFrame = 0;
-        const tick = async () => {
-          if (!runningRef.current || cancelled) return;
-          if (video.readyState >= 2) {
-            try {
-              await segmenter.send({ image: video });
-            } catch {
-              /* ignore */
-            }
-            if (autoCenterRef.current && faceFrame++ % 2 === 0) {
-              try {
-                await faceDetector.send({ image: video });
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-          rafRef.current = requestAnimationFrame(tick);
+          const { sx, sy, cropW, cropH } = crop;
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, w, h);
         };
-        tick();
+
+        cancelVideoPump = subscribeVideoPump(
+          video,
+          () => {
+            paintSegmentedFrame();
+            const now = performance.now();
+            if (mlInFlight || now - lastMlAt < segmentMlInterval) return;
+            lastMlAt = now;
+            mlInFlight = true;
+            void segmenter
+              .send({ image: video })
+              .catch(() => {})
+              .finally(() => {
+                mlInFlight = false;
+              });
+
+            if (faceDetector && useFaceForCenter && now - lastFaceMlAt >= 1000 / FACE_ML_FPS) {
+              lastFaceMlAt = now;
+              void faceDetector.send({ image: video }).catch(() => {});
+            }
+          },
+          () => runningRef.current && !cancelled,
+        );
 
         const out = canvas.captureStream(CAPTURE_FPS);
         processedStreamRef.current = out;
